@@ -1,6 +1,7 @@
 # LiveMap
 
-**TODO: Add description**
+A [Phoenix LiveView](https://github.com/phoenixframework/phoenix_live_view)
+Component for displaying an interactive map with dynamic data.
 
 ## Installation
 
@@ -18,4 +19,3 @@ end
 Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/live_map](https://hexdocs.pm/live_map).
-

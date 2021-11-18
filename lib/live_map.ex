@@ -1,6 +1,7 @@
 defmodule LiveMap do
+  @external_resource "./README.md"
   @moduledoc """
-  Documentation for `LiveMap`.
+  #{File.read!(@external_resource)}
   """
 
   @doc """
