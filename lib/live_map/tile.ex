@@ -12,10 +12,12 @@ defmodule LiveMap.Tile do
   @type x :: pos_integer()
   @type y :: pos_integer()
 
-  defstruct [:latitude, :longitude, :x, :y, :z]
+  defstruct [:latitude, :longitude, :raw_x, :raw_y, :x, :y, :z]
   @type t :: %__MODULE__{
     latitude: latitude(),
     longitude: longitude(),
+    raw_x: number(),
+    raw_y: number(),
     x: x(),
     y: y(),
     z: zoom()
@@ -57,11 +59,16 @@ defmodule LiveMap.Tile do
   """
   @spec at(latitude(), longitude(), zoom()) :: t()
   def at(latitude, longitude, zoom) when is_integer(zoom) do
+    x = Tile.x(longitude, zoom)
+    y = Tile.y(latitude, zoom)
+
     %Tile{
       latitude: latitude,
       longitude: longitude,
-      x: x(longitude, zoom),
-      y: y(latitude, zoom),
+      raw_x: x,
+      raw_y: y,
+      x: floor(x),
+      y: floor(y),
       z: zoom,
     }
   end
@@ -69,44 +76,49 @@ defmodule LiveMap.Tile do
   @doc """
   Converts a longitude at certain zoom to tile x number
 
+  Notes that the return value is not rounded. If used with slippy map,
+  round it down to the nearest integer.
+
   Examples:
 
-      iex> Tile.x(0, 0)
+      iex> floor(Tile.x(0, 0))
       0
 
-      iex> Tile.x(170.1022, 0)
+      iex> floor(Tile.x(170.1022, 0))
       0
 
-      iex> Tile.x(7.56198, 16)
+      iex> floor(Tile.x(7.56198, 16))
       34144
 
   """
-  @spec x(longitude(), zoom()) :: x()
+  @spec x(longitude(), zoom()) :: number()
   def x(longitude, zoom) do
-    floor((1 <<< zoom) * ((longitude + 180) / 360))
+    (1 <<< zoom) * ((longitude + 180) / 360)
   end
 
   @doc """
   Convers a latitude at certain zoom to tile y number
 
+  Notes that the return value is not rounded. If used with slippy map,
+  round it down to the nearest integer.
+
   Examples:
 
-      iex> Tile.y(0, 0)
+      iex> floor(Tile.y(0, 0))
       0
 
-      iex> Tile.y(360, 0)
+      iex> floor(Tile.y(360, 0))
       0
 
-      iex> Tile.y(47.47607, 16)
+      iex> floor(Tile.y(47.47607, 16))
       22923
 
   """
-  @spec y(latitude(), zoom()) :: y()
+  @spec y(latitude(), zoom()) :: number()
   def y(latitude, zoom) do
     radian = latitude * @deg_to_rad
-    second = 1 / Math.cos(radian)
-    r = Math.log(Math.tan(radian) + second) / @pi
-    floor((1 <<< zoom) * (1 - r) / 2)
+    r = Math.log(Math.tan(radian) + 1 / Math.cos(radian)) / @pi
+    (1 <<< zoom) * (1 - r) / 2
   end
 
   @doc """
@@ -139,20 +151,23 @@ defmodule LiveMap.Tile do
   def map(center, width, height, mapper \\ &Function.identity/1)
   # Special case for zoom level 0, in which the whole world is on 1 tile.
   def map(%Tile{z: 0} = center, _width, _height, mapper), do: [mapper.(center)]
-  def map(%Tile{x: x, y: y, z: z}, width, height, mapper) do
+  def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper) do
     half_width = (0.5 * width) / @tile_size
     half_height = (0.5 * height) / @tile_size
 
-    x_min = floor(x - half_width)
-    y_min = floor(y - half_height)
-    x_max = ceil(x + half_width)
-    y_max = ceil(y + half_height)
+    x_min = floor(center_x - half_width)
+    y_min = floor(center_y - half_height)
+    x_max = ceil(center_x + half_width)
+    y_max = ceil(center_y + half_height)
 
-    for tx <- x_min..x_max - 1, ty <- y_min..y_max - 1 do
+    for x <- x_min..x_max - 1,
+      y <- y_min..y_max - 1 do
       mapper.(%Tile{
-        x: tx,
-        y: ty,
-        z: z,
+        raw_x: x,
+        raw_y: y,
+        x: x,
+        y: y,
+        z: zoom,
       })
     end
   end
