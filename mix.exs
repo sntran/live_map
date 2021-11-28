@@ -30,7 +30,7 @@ defmodule LiveMap.MixProject do
 
   defp package do
     [
-      name: :live_phone,
+      name: :live_map,
       files: [
         "lib",
         "mix.exs",
@@ -64,6 +64,7 @@ defmodule LiveMap.MixProject do
       {:floki, ">= 0.30.0", only: :test},
       {:stream_data, "~> 0.5.0", only: :test},
       {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.24", only: :dev, runtime: false},
     ]
   end
 
