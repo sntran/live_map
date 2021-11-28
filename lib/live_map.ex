@@ -7,6 +7,11 @@ defmodule LiveMap do
   require Logger
   alias LiveMap.Tile
 
+  @doc deletegate_to: {Tile, :map, 5}
+  defdelegate tiles(latitude, longitude, zoom, width, height), to: Tile, as: :map
+  @doc deletegate_to: {Tile, :map, 6}
+  defdelegate tiles(latitude, longitude, zoom, width, height, mapper), to: Tile, as: :map
+
   use Phoenix.LiveComponent
 
   @impl Phoenix.LiveComponent
@@ -43,4 +48,34 @@ defmodule LiveMap do
 
   # @callback render/1 is handled by `Phoenix.LiveView.Renderer.before_compile`
   # by looking for a ".html" file with the same name as this module.
+
+  @doc """
+  Returns the viewbox that covers the tiles.
+
+  This essentially starts from the top left tile, and ends at the bottom right tile.
+
+  Examples:
+
+      iex> LiveMap.viewbox([])
+      "0 0 0 0"
+
+      iex> LiveMap.viewbox([%{x: 0, y: 0}])
+      "0 0 1 1"
+
+      iex> LiveMap.viewbox([
+      ...>   %{x: 0, y: 0},
+      ...>   %{x: 0, y: 1},
+      ...>   %{x: 1, y: 0},
+      ...>   %{x: 1, y: 1}
+      ...> ])
+      "0 0 2 2"
+
+  """
+  @spec viewbox(list(Tile.t())) :: String.t()
+  def viewbox([]), do: "0 0 0 0"
+  def viewbox(tiles) do
+    %{x: min_x, y: min_y} = List.first(tiles)
+    %{x: max_x, y: max_y} = List.last(tiles)
+    "#{min_x} #{min_y} #{max_x + 1 - min_x} #{max_y + 1 - min_y}"
+  end
 end

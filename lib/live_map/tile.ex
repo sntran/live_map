@@ -151,9 +151,10 @@ defmodule LiveMap.Tile do
   def map(center, width, height, mapper \\ &Function.identity/1)
   # Special case for zoom level 0, in which the whole world is on 1 tile.
   def map(%Tile{z: 0} = center, _width, _height, mapper), do: [mapper.(center)]
-  def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper) do
+  def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper) when zoom >= 0 do
     half_width = (0.5 * width) / @tile_size
     half_height = (0.5 * height) / @tile_size
+    max_tile = 1 <<< zoom
 
     x_min = floor(center_x - half_width)
     y_min = floor(center_y - half_height)
@@ -161,12 +162,15 @@ defmodule LiveMap.Tile do
     y_max = ceil(center_y + half_height)
 
     for x <- x_min..x_max - 1,
-      y <- y_min..y_max - 1 do
+      y <- y_min..y_max - 1,
+      # x and y may have crossed the date line
+      tile_x = rem(x + max_tile, max_tile),
+      tile_y = rem(y + max_tile, max_tile) do
       mapper.(%Tile{
-        raw_x: x,
-        raw_y: y,
-        x: x,
-        y: y,
+        raw_x: tile_x,
+        raw_y: tile_y,
+        x: tile_x,
+        y: tile_y,
         z: zoom,
       })
     end

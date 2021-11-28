@@ -5,9 +5,18 @@
 >
   <title><%= @title %></title>
 
-  <svg>
+  <%# Thanks to SVG scaling, we can simply place the 1x1 tile images at their
+  exact X, Y location. The viewBox is then used to offset the view to the map.
+
+  The tile layer then uses preserveAspectRatio to make the tiles cover. %>
+  <svg viewBox={viewbox(@tiles)} preserveAspectRatio="xMidYMid slice">
+    <title>Tile Layer</title>
+
     <%= for tile <- @tiles do %>
-      <image href={"https://tile.openstreetmap.org/#{@zoom}/#{tile.x}/#{tile.y}.png"} x="0" y="0" width="256px" height="256px" />
+      <image
+        href={"https://tile.openstreetmap.org/#{@zoom}/#{tile.x}/#{tile.y}.png"}
+        x={tile.x} y={tile.y} width="1" height="1"
+      />
     <% end %>
   </svg>
 

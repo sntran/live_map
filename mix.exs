@@ -62,6 +62,7 @@ defmodule LiveMap.MixProject do
       {:phoenix_live_view, "~> 0.17.5"},
       {:jason, "~> 1.2"},
       {:floki, ">= 0.30.0", only: :test},
+      {:stream_data, "~> 0.5.0", only: :test},
       {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
     ]
   end
