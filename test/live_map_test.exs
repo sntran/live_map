@@ -3,7 +3,9 @@ defmodule LiveMapTest do
   use ExUnitProperties
   doctest LiveMap
 
+  import Phoenix.ConnTest
   import Phoenix.LiveViewTest
+  @endpoint LiveMapTestApp.Endpoint
 
   describe "component" do
 
@@ -112,6 +114,142 @@ defmodule LiveMapTest do
           assert Floki.attribute(image, "height") === ["1"], "image height should always be 1"
         end)
       end
+    end
+
+  end
+
+  describe "zoom" do
+
+    setup do
+      [conn: Phoenix.ConnTest.build_conn()]
+    end
+
+    test "in by clicking Zoom In button", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is only 1 tile at zoom level 0
+      assert [_tile] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_click()
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There are now 4 tiles at zoom level 1
+      tiles = Floki.find(document, "image")
+      assert length(tiles) === 4
+    end
+
+    test "out by clicking Zoom Out button", %{conn: conn} do
+      {:ok, view, _rendered} = live(conn, "/")
+
+      # Zoom in first to go to level 1.
+      view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_click()
+
+      # Clicks zoom out button to go back to level 0
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom Out\"]")
+        |> render_click()
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is now only 1 tile.
+      assert [_tile] = Floki.find(document, "image")
+    end
+
+    test "by pressing Enter", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is only 1 tile at zoom level 0
+      assert [_tile] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_keyup(%{"key" => "Enter"})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There are now 4 tiles at zoom level 1
+      tiles = Floki.find(document, "image")
+      assert length(tiles) === 4
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom Out\"]")
+        |> render_keyup(%{"key" => "Enter"})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is only 1 tile at zoom level 0
+      assert [_tile] = Floki.find(document, "image")
+    end
+
+    test "by pressing Space", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is only 1 tile at zoom level 0
+      assert [_tile] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_keyup(%{"key" => " "})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There are now 4 tiles at zoom level 1
+      tiles = Floki.find(document, "image")
+      assert length(tiles) === 4
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom Out\"]")
+        |> render_keyup(%{"key" => " "})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There is only 1 tile at zoom level 0
+      assert [_tile] = Floki.find(document, "image")
+    end
+
+    test "ignores all other keys", %{conn: conn} do
+      {:ok, view, _rendered} = live(conn, "/")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_keyup(%{"key" => " "})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There are 4 tiles at zoom level 1
+      assert [_, _, _, _] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+        |> render_keyup(%{"key" => "ArrowUp"})
+
+      {:ok, document} = Floki.parse_document(rendered)
+      # There are still 4 tiles at zoom level 1
+      assert [_, _, _, _] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom Out\"]")
+        |> render_keyup(%{"key" => "ArrowUp"})
+
+      {:ok, document} = Floki.parse_document(rendered)
+       # There are still 4 tiles at zoom level 1
+      assert [_, _, _, _] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Zoom Out\"]")
+        |> render_keyup(%{"key" => "Enter"})
+
+      {:ok, document} = Floki.parse_document(rendered)
+       # There is now 1 tile at zoom level 0
+      assert [_] = Floki.find(document, "image")
     end
 
   end

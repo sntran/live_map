@@ -5,6 +5,10 @@
 >
   <title><%= @title %></title>
 
+  <style>
+    <%= render_slot(@style) %>
+  </style>
+
   <%# Thanks to SVG scaling, we can simply place the 1x1 tile images at their
   exact X, Y location. The viewBox is then used to offset the view to the map.
 
@@ -20,5 +24,47 @@
     <% end %>
   </svg>
 
-  <style></style>
+  <g transform={"translate(#{@width - 24 - 16},#{@height - 24 - 16 - 24})"}>
+    <%# Background %>
+    <rect
+      x="0" y="0"
+      width="24" height="48"
+      rx="5" ry="5"
+      fill="white"
+    />
+
+    <%# Zoom-in Button %>
+    <g
+      role="button" tabindex="0" aria-label="Zoom In"
+      width="24" height="24"
+      cursor="pointer" pointer-events="all"
+      phx-click="zoom_in" phx-keyup="zoom_in"
+      phx-throttle="500" phx-target={@myself}
+    >
+      <%= if @zoom_in != [] do %>
+        <%= render_slot(@zoom_in) %>
+      <% else %>
+        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+      <% end %>
+      <%# Full rectangle to act as the bounding box for receiving pointer events %>
+      <rect x="0" y="0" width="24" height="24" fill="none" />
+    </g>
+
+    <%# Zoom-out Button %>
+    <g
+      role="button" tabindex="0" aria-label="Zoom Out"
+      width="24" height="24" transform="translate(0,24)"
+      cursor="pointer" pointer-events="all"
+      phx-click="zoom_out" phx-keyup="zoom_out"
+      phx-throttle="500" phx-target={@myself}
+    >
+      <%= if @zoom_out != [] do %>
+        <%= render_slot(@zoom_out) %>
+      <% else %>
+        <path d="M19 13H5v-2h14v2z"/>
+      <% end %>
+      <%# Full rectangle to act as the bounding box for receiving pointer events %>
+      <rect x="0" y="0" width="24" height="24" fill="none" />
+    </g>
+  </g>
 </svg>

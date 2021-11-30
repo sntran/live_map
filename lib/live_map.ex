@@ -22,6 +22,10 @@ defmodule LiveMap do
       |> assign_new(:width, fn -> 300 end)
       |> assign_new(:height, fn -> 150 end)
       |> assign_new(:title, fn -> "" end)
+      |> assign_new(:style, fn -> [] end)
+      |> assign_new(:zoom, fn -> 0 end)
+      |> assign_new(:zoom_in, fn -> [] end)
+      |> assign_new(:zoom_out, fn -> [] end)
     }
   end
 
@@ -38,6 +42,41 @@ defmodule LiveMap do
 
   # @callback render/1 is handled by `Phoenix.LiveView.Renderer.before_compile`
   # by looking for a ".html" file with the same name as this module.
+
+  @impl Phoenix.LiveComponent
+  @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on the zoom in button.
+  # Notes that we accept both `" "` and `"Spacebar"` since older browsers send that,
+  # including Firefox < 37 and Internet Explorer 9, 10, and 11.
+  def handle_event("zoom_in", %{"key" => key}, socket) when key not in ["Enter", " ", "Spacebar"] do
+    {:noreply, socket}
+  end
+  # When no key is sent, it is a click event.
+  def handle_event("zoom_in", _params, socket) do
+    zoom = socket.assigns[:zoom]
+    {:noreply,
+     socket
+     |> assign(:zoom, zoom + 1)
+     |> assign_tiles()
+    }
+  end
+
+  # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on the zoom out button.
+  # Notes that we accept both `" "` and `"Spacebar"` since older browsers send that,
+  # including Firefox < 37 and Internet Explorer 9, 10, and 11.
+  def handle_event("zoom_out", %{"key" => key}, socket) when key not in ["Enter", " ", "Spacebar"] do
+    {:noreply, socket}
+  end
+  # When no key is sent, it is a click event.
+  def handle_event("zoom_out", _params, socket) do
+    zoom = socket.assigns[:zoom]
+    {:noreply,
+     socket
+      |> assign(:zoom, zoom - 1)
+      |> assign_tiles()
+    }
+  end
 
   defp assign_tiles(socket) do
     width = parse(socket.assigns[:width], :integer)
