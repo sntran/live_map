@@ -61,9 +61,14 @@ defmodule LiveMap.MixProject do
     [
       {:phoenix_live_view, "~> 0.17.5"},
       {:jason, "~> 1.2"},
+
+      # Test/dev deps
+      {:plug_cowboy, "~> 2.0", only: :test},
       {:floki, ">= 0.30.0", only: :test},
       {:stream_data, "~> 0.5.0", only: :test},
       {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
+
+      # Docs deps
       {:ex_doc, "~> 0.24", only: :dev, runtime: false},
     ]
   end
