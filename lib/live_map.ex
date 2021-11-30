@@ -29,25 +29,42 @@ defmodule LiveMap do
   @spec update(Phoenix.LiveView.Socket.assigns(), Phoenix.LiveView.Socket.t()) ::
           {:ok, Phoenix.LiveView.Socket.t()}
   def update(assigns, socket) do
-    width = assigns[:width] || socket.assigns[:width]
-    height = assigns[:height] || socket.assigns[:height]
-    latitude = assigns[:latitude] || socket.assigns[:latitude] || 0
-    longitude = assigns[:longitude] || socket.assigns[:longitude] || 0
-    zoom = assigns[:zoom] || socket.assigns[:zoom] || 0
-
-    center = Tile.at(latitude, longitude, zoom)
-    tiles = Tile.map(center, width, height)
-
     {:ok,
       socket
       |> assign(assigns)
-      |> assign(:zoom, zoom)
-      |> assign(:tiles, tiles)
+      |> assign_tiles()
     }
   end
 
   # @callback render/1 is handled by `Phoenix.LiveView.Renderer.before_compile`
   # by looking for a ".html" file with the same name as this module.
+
+  defp assign_tiles(socket) do
+    width = parse(socket.assigns[:width], :integer)
+    height = parse(socket.assigns[:height], :integer)
+    latitude = parse(socket.assigns[:latitude] || 0.0, :float)
+    longitude = parse(socket.assigns[:longitude] || 0.0, :float)
+    zoom = parse(socket.assigns[:zoom] || 0, :integer)
+
+    tiles = Tile.map(latitude, longitude, zoom, width, height)
+    socket
+    |> assign(:width, width)
+    |> assign(:height, height)
+    |> assign(:latitude, latitude)
+    |> assign(:longitude, longitude)
+    |> assign(:zoom, zoom)
+    |> assign(:tiles, tiles)
+  end
+
+  defp parse(value, :integer) when is_binary(value) do
+    {result, _} = Integer.parse(value)
+    result
+  end
+  defp parse(value, :float) when is_binary(value) do
+    {result, _} = Float.parse(value)
+    result
+  end
+  defp parse(value, type), do: parse("#{value}", type)
 
   @doc """
   Returns the viewbox that covers the tiles.

@@ -5,10 +5,14 @@ defmodule LiveMapTest do
 
   import Phoenix.LiveViewTest
 
-  describe "container" do
+  describe "component" do
 
     test "renders component as an SVG" do
       assert component() =~ "</svg>"
+    end
+
+    test "use the component ID as DOM ID" do
+      assert component(id: "my-awesome-map") =~ "<svg id=\"my-awesome-map\""
     end
 
     test "contains a <style> descendant" do
@@ -19,8 +23,16 @@ defmodule LiveMapTest do
       assert component(width: 300) =~ "width=\"300\""
     end
 
+    test "supports setting width as string" do
+      assert component(width: "300") =~ "width=\"300\""
+    end
+
     test "supports setting height" do
       assert component(height: 150) =~ "height=\"150\""
+    end
+
+    test "supports setting height as string" do
+      assert component(height: "150") =~ "height=\"150\""
     end
 
     test "supports setting title as <title>" do
