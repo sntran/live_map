@@ -30,6 +30,7 @@ defmodule LiveMap.Tile do
   # and performing a division at runtime.
   @pi Math.pi()
   @deg_to_rad @pi / 180.0
+  @rad_to_deg 180.0 / @pi
   @tile_size 256
 
   @doc """
@@ -92,7 +93,7 @@ defmodule LiveMap.Tile do
   end
 
   @doc """
-  Convers a latitude at certain zoom to tile y number
+  Converts a latitude at certain zoom to tile y number
 
   Notes that the return value is not rounded. If used with slippy map,
   round it down to the nearest integer.
@@ -114,6 +115,38 @@ defmodule LiveMap.Tile do
     radian = latitude * @deg_to_rad
     r = Math.log(Math.tan(radian) + 1 / Math.cos(radian)) / @pi
     (1 <<< zoom) * (1 - r) / 2
+  end
+
+  @doc """
+  Converts a tile x number to longitude at certain zoom level.
+
+  Examples:
+
+      iex> Tile.longitude(0, 0)
+      -180.0
+
+      iex> Tile.longitude(34144, 16)
+      7.55859375
+  """
+  @spec longitude(x(), zoom()) :: longitude()
+  def longitude(x, zoom) do
+    x / (1 <<< zoom) * 360 - 180
+  end
+
+  @doc """
+  Converts a tile y number to latitude at certain zoom level.
+
+  Examples:
+
+      iex> Tile.latitude(0, 0)
+      85.0511287798066
+
+      iex> Tile.latitude(22923, 16)
+      47.476375797209336
+  """
+  @spec latitude(y(), zoom()) :: latitude()
+  def latitude(y, zoom) do
+    Math.atan(Math.sinh(@pi * (1 - 2 * y / (1 <<< zoom)))) * @rad_to_deg
   end
 
   @doc """
