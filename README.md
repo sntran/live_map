@@ -20,9 +20,26 @@ A LiveMap can be added to a LiveView by:
 
     <.live_component
       module={LiveMap} id="live-map"
-      width={800} height={600}
-      latitude={10.4197639} longitude={107.1070841} zoom={11}
+      title="Example Live Map"
+      width="800" height="600"
+      latitude="10.4197639" longitude="107.1070841" zoom="11"
     >
+      <%# Styles slot %>
+      <:style>
+        image {
+          opacity: 0.75;
+        }
+      </:style>
+
+      <%# Custom Zoom-In Button %>
+      <:zoom_in>
+        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+      </:zoom_in>
+
+      <%# Custom Zoom-Out Button %>
+      <:zoom_out>
+        <path d="M19 13H5v-2h14v2z"/>
+      </:zoom_out>
     </.live_component>
 
 Checkout `examples` for a Phoenix application demonstrating LiveMap usage.
