@@ -9,8 +9,6 @@ defmodule LiveMap do
 
   @doc deletegate_to: {Tile, :map, 5}
   defdelegate tiles(latitude, longitude, zoom, width, height), to: Tile, as: :map
-  @doc deletegate_to: {Tile, :map, 6}
-  defdelegate tiles(latitude, longitude, zoom, width, height, mapper), to: Tile, as: :map
 
   use Phoenix.LiveComponent
 

@@ -12,6 +12,7 @@ defmodule LiveMap.Tile do
   @type x :: pos_integer()
   @type y :: pos_integer()
 
+  @enforce_keys [:x, :y, :z]
   defstruct [:latitude, :longitude, :raw_x, :raw_y, :x, :y, :z]
   @type t :: %__MODULE__{
     latitude: latitude(),
@@ -39,22 +40,16 @@ defmodule LiveMap.Tile do
   Examples:
 
       iex> tile = LiveMap.Tile.at(0, 0, 0)
-      iex> tile.x
-      0
-      iex> tile.y
-      0
+      iex> Kernel.match?(%Tile{x: 0, y: 0}, tile)
+      true
 
       iex> tile = LiveMap.Tile.at(360, 170.1022, 0)
-      iex> tile.x
-      0
-      iex> tile.y
-      0
+      iex> Kernel.match?(%Tile{x: 0, y: 0}, tile)
+      true
 
       iex> tile = LiveMap.Tile.at(47.47607, 7.56198, 16)
-      iex> tile.x
-      34144
-      iex> tile.y
-      22923
+      iex> Kernel.match?(%Tile{x: 34144, y: 22923}, tile)
+      true
 
   """
   @spec at(latitude(), longitude(), zoom()) :: t()

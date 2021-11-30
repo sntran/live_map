@@ -18,6 +18,15 @@ defmodule LiveMap.MixProject do
       preferred_cli_env: [
         "test.watch": :test
       ],
+      test_coverage: [
+        ignore_modules: [
+          LiveMapTestApp,
+          LiveMapTestApp.Application,
+          LiveMapTestApp.Endpoint,
+          LiveMapTestApp.Router,
+          LiveMapTestApp.Router.Helpers,
+        ],
+      ],
     ]
   end
 
