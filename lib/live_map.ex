@@ -31,9 +31,24 @@ defmodule LiveMap do
   @spec update(Phoenix.LiveView.Socket.assigns(), Phoenix.LiveView.Socket.t()) ::
           {:ok, Phoenix.LiveView.Socket.t()}
   def update(assigns, socket) do
+    # Merges all given assigns to `live_component/1` to the socket first.
+    socket = assign(socket, assigns)
+    # Then parses the assigns of interest.
+    assigns = socket.assigns
+    width = parse(assigns[:width], :integer)
+    height = parse(assigns[:height], :integer)
+    latitude = parse(assigns[:latitude] || 0.0, :float)
+    longitude = parse(assigns[:longitude] || 0.0, :float)
+    zoom = parse(assigns[:zoom] || 0, :integer)
+
     {:ok,
       socket
-      |> assign(assigns)
+      # Reassign the actual assign values back to the socket.
+      |> assign(:width, width)
+      |> assign(:height, height)
+      |> assign(:latitude, latitude)
+      |> assign(:longitude, longitude)
+      |> assign(:zoom, zoom)
       |> assign_tiles()
     }
   end
@@ -76,21 +91,19 @@ defmodule LiveMap do
     }
   end
 
-  defp assign_tiles(socket) do
-    width = parse(socket.assigns[:width], :integer)
-    height = parse(socket.assigns[:height], :integer)
-    latitude = parse(socket.assigns[:latitude] || 0.0, :float)
-    longitude = parse(socket.assigns[:longitude] || 0.0, :float)
-    zoom = parse(socket.assigns[:zoom] || 0, :integer)
+  @doc """
+  Generates tiles from data map. Delegates to `tiles/5`
+  """
+  def tiles(%{
+    latitude: latitude,
+    longitude: longitude,
+    zoom: zoom,
+    width: width,
+    height: height
+  }), do: Tile.map(latitude, longitude, zoom, width, height)
 
-    tiles = Tile.map(latitude, longitude, zoom, width, height)
-    socket
-    |> assign(:width, width)
-    |> assign(:height, height)
-    |> assign(:latitude, latitude)
-    |> assign(:longitude, longitude)
-    |> assign(:zoom, zoom)
-    |> assign(:tiles, tiles)
+  defp assign_tiles(socket) do
+    assign(socket, :tiles, tiles(socket.assigns))
   end
 
   defp parse(value, :integer) when is_binary(value) do

@@ -11,6 +11,7 @@ defmodule LiveMap.MixProject do
       elixir: "~> 1.12",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      escript: escript(),
       description: description(),
       package: package(),
       deps: deps(),
@@ -20,6 +21,7 @@ defmodule LiveMap.MixProject do
       ],
       test_coverage: [
         ignore_modules: [
+          LiveMap.CLI,
           LiveMapTestApp,
           LiveMapTestApp.Application,
           LiveMapTestApp.Endpoint,
@@ -64,6 +66,10 @@ defmodule LiveMap.MixProject do
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
+
+  defp escript do
+    [main_module: LiveMap.CLI]
+  end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
