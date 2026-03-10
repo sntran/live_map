@@ -1,7 +1,7 @@
 defmodule LiveMap.TileTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
-  use Bitwise, only_operators: true
+  import Bitwise, only: [<<<: 2]
 
   alias LiveMap.Tile
   doctest Tile

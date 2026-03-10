@@ -17,6 +17,10 @@ defmodule LiveMapTest do
       assert component(id: "my-awesome-map") =~ "<svg id=\"my-awesome-map\""
     end
 
+    test "supports setting class on the root svg" do
+      assert component(class: "aspect-video") =~ "class=\"aspect-video\""
+    end
+
     test "contains a <style> descendant" do
       assert component() =~ "</style>"
     end
@@ -91,7 +95,7 @@ defmodule LiveMapTest do
           longitude: longitude,
           zoom: zoom,
           width: width,
-          height: height,
+          height: height
         )
 
         {:ok, document} = Floki.parse_document(rendered)

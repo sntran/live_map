@@ -8,7 +8,7 @@ defmodule LiveMap.MixProject do
     [
       app: :live_map,
       version: @version,
-      elixir: "~> 1.12",
+      elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       escript: escript(),
@@ -16,9 +16,6 @@ defmodule LiveMap.MixProject do
       package: package(),
       deps: deps(),
       docs: docs(),
-      preferred_cli_env: [
-        "test.watch": :test
-      ],
       test_coverage: [
         ignore_modules: [
           LiveMap.CLI,
@@ -74,17 +71,17 @@ defmodule LiveMap.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:phoenix_live_view, "~> 0.17.5"},
-      {:jason, "~> 1.2"},
+      {:phoenix_live_view, "~> 1.1"},
+      {:jason, "~> 1.4"},
 
       # Test/dev deps
-      {:plug_cowboy, "~> 2.0", only: :test},
-      {:floki, ">= 0.30.0", only: :test},
-      {:stream_data, "~> 0.5.0", only: :test},
-      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:plug_cowboy, "~> 2.8", only: :test},
+      {:floki, "~> 0.38.0", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test},
+      {:stream_data, "~> 1.3", only: :test},
 
       # Docs deps
-      {:ex_doc, "~> 0.24", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
     ]
   end
 

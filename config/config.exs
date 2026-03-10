@@ -15,5 +15,5 @@ if Mix.env() == :test do
     live_view: [signing_salt: "NsyigQtD"]
 
   # Print only warnings and errors during test
-  config :logger, level: :warn
+  config :logger, level: :warning
 end

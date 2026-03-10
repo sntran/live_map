@@ -1,0 +1,6 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "elixir": true,
+        "mix": true
+    }
+}

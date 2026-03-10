@@ -4,13 +4,13 @@ defmodule LiveMap do
   #{File.read!(@external_resource)}
   """
 
-  require Logger
+  use Phoenix.LiveComponent
+  embed_templates "live_map/*"
+
   alias LiveMap.Tile
 
   @doc deletegate_to: {Tile, :map, 5}
   defdelegate tiles(latitude, longitude, zoom, width, height), to: Tile, as: :map
-
-  use Phoenix.LiveComponent
 
   @impl Phoenix.LiveComponent
   @spec mount(Phoenix.LiveView.Socket.t()) :: {:ok, Phoenix.LiveView.Socket.t()}
@@ -53,8 +53,21 @@ defmodule LiveMap do
     }
   end
 
-  # @callback render/1 is handled by `Phoenix.LiveView.Renderer.before_compile`
-  # by looking for a ".html" file with the same name as this module.
+  attr :id, :string, required: true
+  attr :class, :string, default: nil
+  attr :width, :any, default: 300
+  attr :height, :any, default: 150
+  attr :title, :string, default: ""
+  attr :latitude, :any, default: 0.0
+  attr :longitude, :any, default: 0.0
+  attr :zoom, :any, default: 0
+  attr :tiles, :list, default: []
+  slot :style
+  slot :zoom_in
+  slot :zoom_out
+
+  @impl Phoenix.LiveComponent
+  def render(assigns), do: live_map(assigns)
 
   @impl Phoenix.LiveComponent
   @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
@@ -110,10 +123,12 @@ defmodule LiveMap do
     {result, _} = Integer.parse(value)
     result
   end
+
   defp parse(value, :float) when is_binary(value) do
     {result, _} = Float.parse(value)
     result
   end
+
   defp parse(value, type), do: parse("#{value}", type)
 
   @doc """
@@ -140,6 +155,7 @@ defmodule LiveMap do
   """
   @spec viewbox(list(Tile.t())) :: String.t()
   def viewbox([]), do: "0 0 0 0"
+
   def viewbox(tiles) do
     %{x: min_x, y: min_y} = List.first(tiles)
     %{x: max_x, y: max_y} = List.last(tiles)

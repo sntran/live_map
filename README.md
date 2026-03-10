@@ -3,6 +3,8 @@
 A [Phoenix LiveView](https://github.com/phoenixframework/phoenix_live_view)
 Component for displaying an interactive map with dynamic data.
 
+The library is tested on Elixir 1.16+ and Phoenix LiveView 1.1.
+
 By rendering the map on the server, it avoids the client-side map libraries
 for simple mapping needs. Utilizing LiveView, we can also update map data on
 the server, and let the browser do what it does best—rendering markup.
@@ -42,7 +44,7 @@ A LiveMap can be added to a LiveView by:
       </:zoom_out>
     </.live_component>
 
-Checkout `examples` for a Phoenix application demonstrating LiveMap usage.
+Run `examples/live_maps.exs` for a single-file LiveView example powered by `Mix.install/1`.
 
 ## Installation
 

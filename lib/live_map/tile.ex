@@ -4,13 +4,12 @@ defmodule LiveMap.Tile do
   """
   alias :math, as: Math
   alias __MODULE__, as: Tile
-  require Logger
 
   @type latitude :: number()
   @type longitude :: number()
-  @type zoom :: pos_integer()
-  @type x :: pos_integer()
-  @type y :: pos_integer()
+  @type zoom :: non_neg_integer()
+  @type x :: non_neg_integer()
+  @type y :: non_neg_integer()
 
   @enforce_keys [:x, :y, :z]
   defstruct [:latitude, :longitude, :raw_x, :raw_y, :x, :y, :z]
@@ -25,7 +24,7 @@ defmodule LiveMap.Tile do
   }
 
   # Use Bitwise operations for performant 2^z calculation.
-  use Bitwise, only_operators: true
+  import Bitwise, only: [<<<: 2]
   # Precalculates at compile time to avoid calling :math.pi
   # and performing a division at runtime.
   @pi Math.pi()
@@ -142,7 +141,7 @@ defmodule LiveMap.Tile do
       85.0511287798066
 
       iex> Tile.latitude(22923, 16)
-      47.476375797209336
+      47.47637579720934
   """
   @spec latitude(y(), zoom()) :: latitude()
   def latitude(y, zoom) do
@@ -177,11 +176,13 @@ defmodule LiveMap.Tile do
   """
   @spec map(t(), number(), number(), function()) :: list()
   def map(center, width, height, mapper \\ &Function.identity/1)
+
   # Special case for zoom level 0, in which the whole world is on 1 tile.
   def map(%Tile{z: 0} = center, _width, _height, mapper), do: [mapper.(center)]
+
   def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper) when zoom >= 0 do
-    half_width = (0.5 * width) / @tile_size
-    half_height = (0.5 * height) / @tile_size
+    half_width = (0.5 * abs(width)) / @tile_size
+    half_height = (0.5 * abs(height)) / @tile_size
     max_tile = 1 <<< zoom
 
     x_min = floor(center_x - half_width)
@@ -189,18 +190,22 @@ defmodule LiveMap.Tile do
     x_max = ceil(center_x + half_width)
     y_max = ceil(center_y + half_height)
 
-    for x <- x_min..x_max - 1,
-      y <- y_min..y_max - 1,
-      # x and y may have crossed the date line
-      tile_x = rem(x + max_tile, max_tile),
-      tile_y = rem(y + max_tile, max_tile) do
-      mapper.(%Tile{
-        raw_x: tile_x,
-        raw_y: tile_y,
-        x: tile_x,
-        y: tile_y,
-        z: zoom,
-      })
+    if x_max <= x_min or y_max <= y_min do
+      []
+    else
+      for x <- x_min..(x_max - 1),
+        y <- y_min..(y_max - 1),
+        # x and y may have crossed the date line
+        tile_x = rem(x + max_tile, max_tile),
+        tile_y = rem(y + max_tile, max_tile) do
+        mapper.(%Tile{
+          raw_x: tile_x,
+          raw_y: tile_y,
+          x: tile_x,
+          y: tile_y,
+          z: zoom,
+        })
+      end
     end
   end
 
