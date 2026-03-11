@@ -41,7 +41,11 @@ defmodule LiveMapExample.Layouts do
               this.panInterval = 80
 
               this.onPointerDown = (event) => {
-                if (event.button !== 0 || this.zoomControlTarget(event.target)) {
+                if (
+                  event.button !== 0 ||
+                    this.zoomControlTarget(event.target) ||
+                    this.interactiveTarget(event.target)
+                ) {
                   return
                 }
 
@@ -88,6 +92,10 @@ defmodule LiveMapExample.Layouts do
               }
 
               this.onWheel = (event) => {
+                if (this.interactiveTarget(event.target)) {
+                  return
+                }
+
                 if (this.zoomLocked || !Number.isFinite(event.deltaY) || event.deltaY === 0) {
                   if (event.deltaY !== 0) {
                     event.preventDefault()
@@ -131,7 +139,7 @@ defmodule LiveMapExample.Layouts do
               }
 
               this.onDoubleClick = (event) => {
-                if (this.zoomControlTarget(event.target)) {
+                if (this.zoomControlTarget(event.target) || this.interactiveTarget(event.target)) {
                   return
                 }
 
@@ -201,6 +209,10 @@ defmodule LiveMapExample.Layouts do
               return target?.closest?.('[aria-label="Zoom In"], [aria-label="Zoom Out"]')
             },
 
+            interactiveTarget(target) {
+              return target?.closest?.('[data-map-interactive="true"]')
+            },
+
             zoomDirection(target) {
               return target?.getAttribute("aria-label") === "Zoom In" ? 1 : -1
             },
@@ -254,6 +266,69 @@ defmodule LiveMapExample.PageLive do
   @map_height 900
   @max_zoom 18
   @mercator_limit 85.0511287798066
+  @marker_visibility_km 12.0
+  @static_marker %{
+    id: "harbor",
+    short: "HB",
+    label: "Harbor",
+    category: "Working waterfront",
+    description:
+      "A sheltered edge of Vung Tau where ferries, fishing boats, and cargo traffic keep the city tied to the sea every day.",
+    latitude: 10.411379,
+    longitude: 107.136224
+  }
+  @markers [
+    %{
+      id: "front-beach",
+      short: "FB",
+      label: "Front Beach",
+      category: "Promenade",
+      description:
+        "A calmer waterfront with cafés, palms, and a long curve of shoreline that feels especially alive at sunset.",
+      latitude: 10.33686,
+      longitude: 107.08479
+    },
+    %{
+      id: "back-beach",
+      short: "BB",
+      label: "Back Beach",
+      category: "Open coast",
+      description:
+        "The broader surf-facing stretch of Vung Tau, known for sea breeze, morning exercise, and long sandy views.",
+      latitude: 10.33454,
+      longitude: 107.09652
+    },
+    %{
+      id: "lighthouse",
+      short: "LH",
+      label: "Vung Tau Lighthouse",
+      category: "Hilltop lookout",
+      description:
+        "A historic beacon above the city, with winding roads, sea air, and one of the clearest panoramic views in Vung Tau.",
+      latitude: 10.34618,
+      longitude: 107.0843
+    },
+    %{
+      id: "jesus",
+      short: "CV",
+      label: "Christ of Vung Tau",
+      category: "Monument",
+      description:
+        "The giant hillside statue that defines the skyline, reached by a climb that opens up broad views over the coast.",
+      latitude: 10.34138,
+      longitude: 107.09304
+    },
+    %{
+      id: "long-son",
+      short: "LS",
+      label: "Long Son",
+      category: "Island edge",
+      description:
+        "A quieter side of the region, where water, low hills, and fishing activity create a gentler rhythm beyond the city center.",
+      latitude: 10.48823,
+      longitude: 107.0086
+    }
+  ]
 
   @impl true
   def mount(_params, _session, socket) do
@@ -261,6 +336,7 @@ defmodule LiveMapExample.PageLive do
      socket
      |> assign(:map_width, @map_width)
      |> assign(:map_height, @map_height)
+      |> assign(:static_marker, @static_marker)
      |> assign(:latitude, 10.4197639)
      |> assign(:longitude, 107.1070841)
      |> assign(:zoom, 11)}
@@ -307,8 +383,8 @@ defmodule LiveMapExample.PageLive do
           </h1>
           <p class="max-w-3xl text-sm leading-7 text-slate-700 sm:text-base">
             A minimal Phoenix LiveView endpoint packaged as one script. Change the coordinates,
-            drag the map, or use the mouse wheel to demonstrate how the server keeps map state
-            and form state aligned.
+            drag the map, or use the mouse wheel to demonstrate how the server keeps map state,
+            form state, a single explicit marker, and a parent-filtered `:for` marker set aligned.
           </p>
         </div>
       </div>
@@ -402,13 +478,43 @@ defmodule LiveMapExample.PageLive do
             longitude={@longitude}
             zoom={@zoom}
           >
+            <:marker
+              id={@static_marker.id}
+              latitude={@static_marker.latitude}
+              longitude={@static_marker.longitude}
+              label={@static_marker.label}
+            >
+              <.place_marker marker={@static_marker} />
+            </:marker>
+
+            <:marker
+              :for={marker <- visible_markers(@latitude, @longitude)}
+              id={marker.id}
+              latitude={marker.latitude}
+              longitude={marker.longitude}
+              label={marker.label}
+            >
+              <.place_marker marker={marker} />
+            </:marker>
+
             <:zoom_in>
-              <path fill="#0f172a" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+              <span
+                class="flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-base font-black text-slate-900"
+                aria-hidden="true"
+              >
+                +
+              </span>
             </:zoom_in>
 
             <:zoom_out>
-              <path fill="#0f172a" d="M19 13H5v-2h14v2z" />
+              <span
+                class="flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-lg font-black leading-none text-slate-900"
+                aria-hidden="true"
+              >
+                -
+              </span>
             </:zoom_out>
+
           </.live_component>
         </div>
       </div>
@@ -534,6 +640,278 @@ defmodule LiveMapExample.PageLive do
   end
 
   defp round_coordinate(value), do: Float.round(value, 6)
+
+  attr :marker, :map, required: true
+  defp place_marker(assigns) do
+    palette = marker_palette(assigns.marker.id)
+
+    assigns =
+      assigns
+      |> assign(:palette, palette)
+      |> assign(:popover_id, "marker-#{assigns.marker.id}")
+
+    ~H"""
+    <div class="relative inline-block pointer-events-none" data-map-interactive="true">
+      <button
+        type="button"
+        command="toggle-popover"
+        commandfor={@popover_id}
+        data-map-interactive="true"
+        class={[
+          "pointer-events-auto inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold text-white shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600",
+          @palette.button_class
+        ]}
+      >
+        <span class={[
+          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black",
+          @palette.badge_class
+        ]}>
+          {@marker.short}
+        </span>
+        {@marker.label}
+      </button>
+
+      <dialog
+        id={@popover_id}
+        popover=""
+        data-map-interactive="true"
+        class={[
+          "pointer-events-auto m-auto w-64 rounded-2xl border bg-white p-0 text-sm text-slate-700 shadow-xl backdrop:bg-slate-950/20",
+          @palette.dialog_class,
+        ]}
+      >
+        <div class="overflow-hidden rounded-[inherit]">
+          <div class={[
+            "flex items-start justify-between border-b px-4 py-3",
+            @palette.header_class
+          ]}>
+            <div class="space-y-1">
+              <p class="text-sm font-semibold text-slate-950">{@marker.label}</p>
+              <p class="text-xs font-medium uppercase tracking-[0.14em] text-slate-600">
+                {@marker.category}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              command="hide-popover"
+              commandfor={@popover_id}
+              data-map-interactive="true"
+              class="rounded-full border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-white/70"
+            >
+              Close
+            </button>
+          </div>
+
+          <.place_postcard marker={@marker} palette={@palette} />
+
+          <div class="space-y-3 p-4">
+            <p>{@marker.description}</p>
+            <p>
+              <strong>Coordinates:</strong>
+              {Float.round(@marker.latitude, 4)},
+              {Float.round(@marker.longitude, 4)}
+            </p>
+            <a
+              href="https://www.openstreetmap.org/"
+              target="_blank"
+              rel="noreferrer"
+              data-map-interactive="true"
+              class={[
+                "font-semibold underline underline-offset-2",
+                @palette.link_class
+              ]}
+            >
+              OpenStreetMap
+            </a>
+          </div>
+        </div>
+      </dialog>
+    </div>
+    """
+  end
+
+  attr :marker, :map, required: true
+  attr :palette, :map, required: true
+  defp place_postcard(assigns) do
+    ~H"""
+    <div class={[
+      "relative h-28 overflow-hidden border-b",
+      @palette.postcard_class
+    ]}>
+      <svg viewBox="0 0 256 112" class="h-full w-full" aria-hidden="true">
+        <defs>
+          <linearGradient id={"sky-#{@marker.id}"} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color={@palette.sky_start} />
+            <stop offset="100%" stop-color={@palette.sky_end} />
+          </linearGradient>
+          <linearGradient id={"sea-#{@marker.id}"} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color={@palette.sea_start} />
+            <stop offset="100%" stop-color={@palette.sea_end} />
+          </linearGradient>
+        </defs>
+
+        <rect width="256" height="112" fill={"url(#sky-#{@marker.id})"} />
+        <circle cx="208" cy="22" r="13" fill="rgba(255,255,255,0.72)" />
+        <rect y="68" width="256" height="44" fill={"url(#sea-#{@marker.id})"} />
+
+        <%= case @marker.id do %>
+          <% "harbor" -> %>
+            <rect x="18" y="56" width="72" height="10" rx="4" fill="#0f172a" opacity="0.16" />
+            <rect x="24" y="48" width="34" height="18" rx="4" fill="#334155" />
+            <rect x="78" y="44" width="44" height="22" rx="4" fill="#1f2937" />
+            <path d="M148 69h42l-8 12h-30z" fill="#0f766e" />
+            <path d="M165 38v31" stroke="#f8fafc" stroke-width="4" stroke-linecap="round" />
+            <path d="M165 41l17 9h-17z" fill="#f8fafc" />
+          <% "front-beach" -> %>
+            <path d="M0 82c18-8 35-8 53 0s35 8 53 0 35-8 53 0 35 8 53 0 35-8 53 0v30H0z" fill="#0284c7" opacity="0.82" />
+            <path d="M0 90c18-8 35-8 53 0s35 8 53 0 35-8 53 0 35 8 53 0 35-8 53 0" fill="none" stroke="#e0f2fe" stroke-width="4" stroke-linecap="round" />
+            <path d="M84 68l16-22 16 22z" fill="#fb923c" />
+            <path d="M100 46v32" stroke="#52525b" stroke-width="4" stroke-linecap="round" />
+          <% "back-beach" -> %>
+            <path d="M0 72c28 10 56 10 84 0s56-10 84 0 56 10 88 0v40H0z" fill="#0ea5e9" opacity="0.82" />
+            <path d="M0 88c28 10 56 10 84 0s56-10 84 0 56 10 88 0" fill="none" stroke="#dbeafe" stroke-width="4" stroke-linecap="round" />
+            <path d="M170 40c18 0 34 6 48 18-18 7-35 10-52 10-11 0-22-2-34-6 10-14 22-22 38-22z" fill="#94a3b8" opacity="0.5" />
+          <% "lighthouse" -> %>
+            <rect x="102" y="34" width="22" height="42" rx="4" fill="#f8fafc" />
+            <rect x="98" y="28" width="30" height="10" rx="4" fill="#ef4444" />
+            <path d="M113 14v14" stroke="#475569" stroke-width="4" stroke-linecap="round" />
+            <path d="M128 36l58-18v20l-58 10z" fill="#fde68a" opacity="0.78" />
+            <path d="M42 84c28-18 54-18 82 0s54 18 90 0v28H42z" fill="#1d4ed8" opacity="0.7" />
+          <% "jesus" -> %>
+            <path d="M118 24c6 0 11 5 11 11s-5 11-11 11-11-5-11-11 5-11 11-11z" fill="#f8fafc" />
+            <path d="M118 46v34" stroke="#f8fafc" stroke-width="9" stroke-linecap="round" />
+            <path d="M90 54h56" stroke="#f8fafc" stroke-width="8" stroke-linecap="round" />
+            <path d="M72 86c28-22 58-22 90 0v26H72z" fill="#475569" opacity="0.82" />
+          <% "long-son" -> %>
+            <path d="M18 80c24-22 52-22 84 0s60 22 92 0v32H18z" fill="#16a34a" opacity="0.82" />
+            <path d="M144 80c16-8 34-8 54 0" fill="none" stroke="#f8fafc" stroke-width="4" stroke-linecap="round" />
+            <path d="M30 65h70" stroke="#f8fafc" stroke-width="5" stroke-linecap="round" />
+            <path d="M48 64l10-20 10 20" fill="#f8fafc" opacity="0.92" />
+          <% _ -> %>
+            <rect x="52" y="34" width="152" height="48" rx="18" fill="#ffffff" opacity="0.48" />
+        <% end %>
+      </svg>
+    </div>
+    """
+  end
+
+  defp marker_palette(id) do
+    case id do
+      "harbor" ->
+        %{
+          pin_fill: "#0f766e",
+          button_class: "border-emerald-900 bg-emerald-800/95 hover:bg-emerald-700",
+          badge_class: "bg-emerald-200 text-emerald-950",
+          dialog_class: "border-emerald-200",
+          header_class: "bg-emerald-50",
+          postcard_class: "border-emerald-100",
+          link_class: "text-emerald-700",
+          sky_start: "#d1fae5",
+          sky_end: "#ecfeff",
+          sea_start: "#0f766e",
+          sea_end: "#0f766e"
+        }
+
+      "front-beach" ->
+        %{
+          pin_fill: "#f97316",
+          button_class: "border-orange-900 bg-orange-600/95 hover:bg-orange-500",
+          badge_class: "bg-orange-100 text-orange-950",
+          dialog_class: "border-orange-200",
+          header_class: "bg-orange-50",
+          postcard_class: "border-orange-100",
+          link_class: "text-orange-700",
+          sky_start: "#fed7aa",
+          sky_end: "#fffbeb",
+          sea_start: "#fb923c",
+          sea_end: "#ea580c"
+        }
+
+      "back-beach" ->
+        %{
+          pin_fill: "#0284c7",
+          button_class: "border-sky-900 bg-sky-700/95 hover:bg-sky-600",
+          badge_class: "bg-sky-100 text-sky-950",
+          dialog_class: "border-sky-200",
+          header_class: "bg-sky-50",
+          postcard_class: "border-sky-100",
+          link_class: "text-sky-700",
+          sky_start: "#dbeafe",
+          sky_end: "#e0f2fe",
+          sea_start: "#0ea5e9",
+          sea_end: "#0369a1"
+        }
+
+      "lighthouse" ->
+        %{
+          pin_fill: "#dc2626",
+          button_class: "border-rose-900 bg-rose-700/95 hover:bg-rose-600",
+          badge_class: "bg-rose-100 text-rose-950",
+          dialog_class: "border-rose-200",
+          header_class: "bg-rose-50",
+          postcard_class: "border-rose-100",
+          link_class: "text-rose-700",
+          sky_start: "#ffe4e6",
+          sky_end: "#fef2f2",
+          sea_start: "#fca5a5",
+          sea_end: "#dc2626"
+        }
+
+      "jesus" ->
+        %{
+          pin_fill: "#475569",
+          button_class: "border-slate-900 bg-slate-700/95 hover:bg-slate-600",
+          badge_class: "bg-slate-100 text-slate-950",
+          dialog_class: "border-slate-200",
+          header_class: "bg-slate-50",
+          postcard_class: "border-slate-100",
+          link_class: "text-slate-700",
+          sky_start: "#e2e8f0",
+          sky_end: "#f8fafc",
+          sea_start: "#94a3b8",
+          sea_end: "#475569"
+        }
+
+      "long-son" ->
+        %{
+          pin_fill: "#16a34a",
+          button_class: "border-lime-900 bg-lime-700/95 hover:bg-lime-600",
+          badge_class: "bg-lime-100 text-lime-950",
+          dialog_class: "border-lime-200",
+          header_class: "bg-lime-50",
+          postcard_class: "border-lime-100",
+          link_class: "text-lime-700",
+          sky_start: "#dcfce7",
+          sky_end: "#f7fee7",
+          sea_start: "#4ade80",
+          sea_end: "#16a34a"
+        }
+    end
+  end
+
+  defp visible_markers(latitude, longitude) do
+    Enum.filter(@markers, fn marker ->
+      distance_km(latitude, longitude, marker.latitude, marker.longitude) <= @marker_visibility_km
+    end)
+  end
+
+  defp distance_km(latitude_a, longitude_a, latitude_b, longitude_b) do
+    earth_radius_km = 6371.0
+    latitude_delta = degrees_to_radians(latitude_b - latitude_a)
+    longitude_delta = degrees_to_radians(longitude_b - longitude_a)
+    latitude_a = degrees_to_radians(latitude_a)
+    latitude_b = degrees_to_radians(latitude_b)
+
+    haversine =
+      :math.sin(latitude_delta / 2) * :math.sin(latitude_delta / 2) +
+        :math.cos(latitude_a) * :math.cos(latitude_b) *
+          :math.sin(longitude_delta / 2) * :math.sin(longitude_delta / 2)
+
+    2 * earth_radius_km * :math.atan2(:math.sqrt(haversine), :math.sqrt(1 - haversine))
+  end
+
+  defp degrees_to_radians(degrees), do: degrees * :math.pi() / 180.0
 end
 
 defmodule LiveMapExample.Router do

@@ -5,14 +5,22 @@
   xmlns="http://www.w3.org/2000/svg"
   width={@width}
   height={@height}
+  viewBox={"0 0 #{@width} #{@height}"}
 >
   <title>{@title}</title>
 
   <style>
-    {render_slot(@style)}
+    <%= render_slot(@style) %>
   </style>
 
-  <svg viewBox={viewbox(@tiles)} preserveAspectRatio="xMidYMid slice">
+  <svg
+    x="0"
+    y="0"
+    width={@width}
+    height={@height}
+    viewBox={viewbox(@tiles)}
+    preserveAspectRatio="xMidYMid slice"
+  >
     <title>Tile Layer</title>
 
     <image :for={tile <- @tiles}
@@ -22,6 +30,55 @@
       width="1"
       height="1"
     />
+  </svg>
+
+  <svg
+    x="0"
+    y="0"
+    width={@width}
+    height={@height}
+    viewBox={viewbox(@tiles)}
+    preserveAspectRatio="xMidYMid slice"
+    overflow="visible"
+    class="live-map-markers"
+    data-live-map-markers="true"
+  >
+    <title>Marker Layer</title>
+
+    <g :for={marker <- @marker_overlays}
+      id={marker.dom_id}
+      class="live-map-marker"
+      data-live-map-marker="true"
+      data-live-map-marker-id={marker.id}
+      data-live-map-marker-label={marker.label}
+      transform={"translate(#{marker.x},#{marker.y}) scale(#{marker.scale})"}
+    >
+      <title>{marker.label}</title>
+
+      <%= if marker.has_body do %>
+        <foreignObject
+          x="12"
+          y="-12"
+          width="320"
+          height="320"
+          overflow="visible"
+          style="pointer-events: none;"
+        >
+          <div
+            xmlns="http://www.w3.org/1999/xhtml"
+            class="live-map-marker-html"
+            style="pointer-events: auto; display: inline-block;"
+          >
+            {render_slot(marker.slot)}
+          </div>
+        </foreignObject>
+      <% else %>
+        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="white" stroke-width="3" />
+        <text x="14" y="5" fill="#0f172a" font-size="14" font-weight="600">
+          {marker.label}
+        </text>
+      <% end %>
+    </g>
   </svg>
 
   <g transform={"translate(#{@width - 24 - 16},#{@height - 24 - 16 - 24})"}>
@@ -41,7 +98,14 @@
       phx-target={@myself}
     >
       <%= if @zoom_in != [] do %>
-        {render_slot(@zoom_in)}
+        <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
+          <div
+            xmlns="http://www.w3.org/1999/xhtml"
+            style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+          >
+            {render_slot(@zoom_in)}
+          </div>
+        </foreignObject>
       <% else %>
         <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
       <% end %>
@@ -64,7 +128,14 @@
       phx-target={@myself}
     >
       <%= if @zoom_out != [] do %>
-        {render_slot(@zoom_out)}
+        <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
+          <div
+            xmlns="http://www.w3.org/1999/xhtml"
+            style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+          >
+            {render_slot(@zoom_out)}
+          </div>
+        </foreignObject>
       <% else %>
         <path d="M19 13H5v-2h14v2z" />
       <% end %>

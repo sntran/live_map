@@ -33,18 +33,56 @@ A LiveMap can be added to a LiveView by:
         }
       </:style>
 
-      <%# Custom Zoom-In Button %>
+      <%# Optional custom HTML zoom controls %>
       <:zoom_in>
-        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+        <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">+</span>
       </:zoom_in>
 
-      <%# Custom Zoom-Out Button %>
       <:zoom_out>
-        <path d="M19 13H5v-2h14v2z"/>
+        <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">-</span>
       </:zoom_out>
+
+      <%# A single explicit marker %>
+      <:marker
+        id="harbor"
+        latitude={10.411379}
+        longitude={107.136224}
+        label="Harbor"
+      />
+
+      <%# Multiple markers via :for %>
+      <:marker
+        :for={marker <- @visible_markers}
+        id={marker.id}
+        latitude={marker.latitude}
+        longitude={marker.longitude}
+        label={marker.label}
+      />
     </.live_component>
 
 Run `examples/live_maps.exs` for a single-file LiveView example powered by `Mix.install/1`.
+
+Each `:marker` slot entry must provide `latitude`, `longitude`, and `label`. The
+optional `id` is used to generate a stable DOM id. LiveMap only projects and renders
+the markers it receives; deciding which markers to pass remains the responsibility of
+the parent LiveView. When the `:marker` slot body is omitted, LiveMap renders a
+default marker dot and label. If a body is provided, it must be HTML content;
+LiveMap wraps it in a `<foreignObject>` automatically. This keeps the public API
+decoupled from the internal SVG rendering details while still allowing rich HTML
+marker UIs. No `:let` or projected slot assigns are required. You can pass a single
+marker directly, or emit multiple marker slots with `:for`.
+
+Custom zoom controls follow the same rule: use `:zoom_in` and `:zoom_out` with
+HTML content only. LiveMap wraps that content for display inside the SVG control
+chrome.
+
+HTML marker example:
+
+    <:marker id="harbor" latitude={10.411379} longitude={107.136224} label="Harbor">
+      <button class="rounded-full bg-emerald-700 px-3 py-1 text-xs font-semibold text-white">
+        Harbor
+      </button>
+    </:marker>
 
 ## Installation
 

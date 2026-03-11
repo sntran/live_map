@@ -4,6 +4,7 @@ defmodule LiveMapTest do
   doctest LiveMap
 
   import Phoenix.ConnTest
+  import Phoenix.Component
   import Phoenix.LiveViewTest
   @endpoint LiveMapTestApp.Endpoint
 
@@ -43,6 +44,78 @@ defmodule LiveMapTest do
 
     test "supports setting title as <title>" do
       assert component(title: "Awesome Live Map") =~ "<title>Awesome Live Map</title>"
+    end
+
+    test "renders custom HTML zoom controls through explicit zoom slots" do
+      rendered = component_with_zoom_controls()
+
+      {:ok, document} = Floki.parse_document(rendered)
+
+      assert [_zoom_in] = Floki.find(document, "[data-zoom-control='in']")
+      assert [_zoom_out] = Floki.find(document, "[data-zoom-control='out']")
+    end
+
+    test "renders markers inside a dedicated marker layer" do
+      rendered =
+        component_with_markers([
+          %{id: "center", latitude: 0, longitude: 0, label: "Center"},
+          %{id: "east", latitude: 0, longitude: 10, label: "East"}
+        ])
+
+      {:ok, document} = Floki.parse_document(rendered)
+      assert [_marker_layer] = Floki.find(document, "svg.live-map-markers")
+      markers = Floki.find(document, "g.live-map-marker")
+
+      assert length(markers) === 2
+    end
+
+    test "projects marker slots into map coordinates" do
+      rendered = component_with_markers([
+        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+      ])
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+
+      assert Floki.attribute(marker, "transform") === ["translate(0.5,0.5) scale(0.00390625)"]
+    end
+
+    test "uses marker labels for accessibility and custom HTML slot bodies without :let" do
+      rendered = component_with_markers([
+        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+      ], marker_body: :html)
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+      [html_marker] = Floki.find(marker, "div[data-html-marker='center']")
+
+      assert Floki.attribute(marker, "data-live-map-marker-label") === ["Center marker"]
+      assert Floki.find(marker, "title") |> Floki.text() === "Center marker"
+      assert Floki.text(html_marker) |> String.trim() === "Center marker"
+    end
+
+    test "wraps HTML marker bodies in a foreignObject" do
+      rendered = component_with_markers([
+        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+      ], marker_body: :html)
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+
+      assert [_foreign_object] = Floki.find(marker, "foreignobject")
+      assert [_html_marker] = Floki.find(marker, "div[data-html-marker='center']")
+    end
+
+    test "falls back to a default marker body and label when the slot body is empty" do
+      rendered = component_with_markers([
+        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+      ], marker_body: :none)
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+
+      assert [_circle] = Floki.find(marker, "circle")
+      assert Floki.find(marker, "text") |> Floki.text() |> String.trim() === "Center marker"
     end
 
   end
@@ -100,8 +173,10 @@ defmodule LiveMapTest do
 
         {:ok, document} = Floki.parse_document(rendered)
 
-        [viewbox] = Floki.attribute(document, "svg", "viewbox")
-        assert viewbox === LiveMap.viewbox(tiles)
+        layer_viewboxes = Floki.attribute(document, "svg > svg", "viewbox")
+
+        assert length(layer_viewboxes) === 2
+        assert Enum.uniq(layer_viewboxes) === [LiveMap.viewbox(tiles)]
 
         images = Floki.find(document, "image")
         assert length(images) === length(tiles)
@@ -261,5 +336,72 @@ defmodule LiveMapTest do
   defp component(assigns \\ []) do
     assigns = Keyword.merge([id: "live-map"], assigns)
     render_component(LiveMap, assigns)
+  end
+
+  defp component_with_markers(markers, assigns \\ []) do
+    defaults = %{
+      id: "live-map",
+      width: 300,
+      height: 150,
+      latitude: 0,
+      longitude: 0,
+      zoom: 0,
+      markers: markers,
+      marker_body: :html
+    }
+
+    assigns = Map.merge(defaults, Enum.into(assigns, %{}))
+
+    render_component(fn assigns ->
+      ~H"""
+      <.live_component
+        module={LiveMap}
+        id={@id}
+        width={@width}
+        height={@height}
+        latitude={@latitude}
+        longitude={@longitude}
+        zoom={@zoom}
+      >
+        <:marker
+          :if={@marker_body == :html}
+          :for={marker <- @markers}
+          id={marker.id}
+          latitude={marker.latitude}
+          longitude={marker.longitude}
+          label={marker.label}
+        >
+          <div data-html-marker={marker.id} class="rounded-full bg-sky-600 px-3 py-1 text-white">
+            {marker.label}
+          </div>
+        </:marker>
+
+        <:marker
+          :if={@marker_body == :none}
+          :for={marker <- @markers}
+          id={marker.id}
+          latitude={marker.latitude}
+          longitude={marker.longitude}
+          label={marker.label}
+        />
+      </.live_component>
+      """
+    end, assigns)
+  end
+
+  defp component_with_zoom_controls(assigns \\ %{}) do
+    render_component(fn assigns ->
+      ~H"""
+      <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
+        <:zoom_in>
+          <span data-zoom-control="in">+</span>
+        </:zoom_in>
+
+        <:zoom_out>
+          <span data-zoom-control="out">-</span>
+        </:zoom_out>
+      </.live_component>
+      """
+    end, assigns)
   end
 end

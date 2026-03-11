@@ -7,6 +7,7 @@ defmodule LiveMap do
   use Phoenix.LiveComponent
   embed_templates "live_map/*"
 
+  alias LiveMap.Marker
   alias LiveMap.Tile
 
   @doc deletegate_to: {Tile, :map, 5}
@@ -24,6 +25,7 @@ defmodule LiveMap do
       |> assign_new(:zoom, fn -> 0 end)
       |> assign_new(:zoom_in, fn -> [] end)
       |> assign_new(:zoom_out, fn -> [] end)
+      |> assign_new(:marker, fn -> [] end)
     }
   end
 
@@ -50,6 +52,7 @@ defmodule LiveMap do
       |> assign(:longitude, longitude)
       |> assign(:zoom, zoom)
       |> assign_tiles()
+      |> assign_marker_overlays()
     }
   end
 
@@ -62,9 +65,16 @@ defmodule LiveMap do
   attr :longitude, :any, default: 0.0
   attr :zoom, :any, default: 0
   attr :tiles, :list, default: []
+  attr :marker_overlays, :list, default: []
   slot :style
   slot :zoom_in
   slot :zoom_out
+  slot :marker do
+    attr :id, :any
+    attr :latitude, :any, required: true
+    attr :longitude, :any, required: true
+    attr :label, :string, required: true
+  end
 
   @impl Phoenix.LiveComponent
   def render(assigns), do: live_map(assigns)
@@ -117,6 +127,18 @@ defmodule LiveMap do
 
   defp assign_tiles(socket) do
     assign(socket, :tiles, tiles(socket.assigns))
+  end
+
+  defp assign_marker_overlays(socket) do
+    assign(socket, :marker_overlays, marker_overlays(socket.assigns))
+  end
+
+  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom}) do
+    markers
+    |> Enum.with_index()
+    |> Enum.map(fn {marker, index} ->
+      Marker.project(marker, map_id, zoom, index)
+    end)
   end
 
   defp parse(value, :integer) when is_binary(value) do
