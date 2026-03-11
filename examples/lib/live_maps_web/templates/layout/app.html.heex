@@ -1,5 +1,0 @@
-<main class="container">
-  <p class="alert alert-info" role="alert"><%= Phoenix.Flash.get(@conn.assigns[:flash] || %{}, :info) %></p>
-  <p class="alert alert-danger" role="alert"><%= Phoenix.Flash.get(@conn.assigns[:flash] || %{}, :error) %></p>
-  <%= @inner_content %>
-</main>
