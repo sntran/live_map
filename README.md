@@ -42,6 +42,27 @@ A LiveMap can be added to a LiveView by:
         <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">-</span>
       </:zoom_out>
 
+      <%# Optional SVG overlays projected from map coordinates %>
+      <:polygon
+        id="district"
+        label="Sample district"
+        points={[
+          %{latitude: 10.34, longitude: 107.07},
+          %{latitude: 10.35, longitude: 107.09},
+          %{latitude: 10.33, longitude: 107.11}
+        ]}
+      />
+
+      <:polyline
+        id="route"
+        label="Sample route"
+        points={[
+          %{latitude: 10.34, longitude: 107.07},
+          %{latitude: 10.36, longitude: 107.10},
+          %{latitude: 10.38, longitude: 107.13}
+        ]}
+      />
+
       <%# A single explicit marker %>
       <:marker
         id="harbor"
@@ -66,7 +87,7 @@ Each `:marker` slot entry must provide `latitude`, `longitude`, and `label`. The
 optional `id` is used to generate a stable DOM id. LiveMap only projects and renders
 the markers it receives; deciding which markers to pass remains the responsibility of
 the parent LiveView. When the `:marker` slot body is omitted, LiveMap renders a
-default marker dot and label. If a body is provided, it must be HTML content;
+default SVG marker pin with the marker label exposed through the SVG title. If a body is provided, it must be HTML content;
 LiveMap wraps it in a `<foreignObject>` automatically. This keeps the public API
 decoupled from the internal SVG rendering details while still allowing rich HTML
 marker UIs. No `:let` or projected slot assigns are required. You can pass a single
@@ -75,6 +96,12 @@ marker directly, or emit multiple marker slots with `:for`.
 Custom zoom controls follow the same rule: use `:zoom_in` and `:zoom_out` with
 HTML content only. LiveMap wraps that content for display inside the SVG control
 chrome.
+
+Polygon and polyline overlays are projected in map coordinates and rendered as
+SVG shapes on their own layer. Each `:polygon` or `:polyline` slot accepts a
+`points` list of `%{latitude: ..., longitude: ...}` maps, with optional `id`
+and `label` attributes. LiveMap renders default SVG `<polygon>` and `<polyline>`
+elements for these overlays.
 
 HTML marker example:
 

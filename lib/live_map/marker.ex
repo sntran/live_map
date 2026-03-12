@@ -22,19 +22,44 @@ defmodule LiveMap.Marker do
       x: x,
       y: y,
       scale: @pixel_scale,
-      slot: marker_slot,
-      has_body: has_body?(marker_slot)
+      slot: marker_slot
+    }
+  end
+
+  def project_shape(type, shape_slot, map_id, zoom, index) when type in [:polygon, :polyline] do
+    id = normalize_id(Map.get(shape_slot, :id))
+    label = Map.get(shape_slot, :label)
+    points = project_points(Map.fetch!(shape_slot, :points), zoom)
+
+    %{
+      type: type,
+      id: id,
+      dom_id: shape_dom_id(type, map_id, id, index),
+      label: label,
+      points: points,
+      points_attribute: points_attribute(points)
     }
   end
 
   defp dom_id(map_id, nil, index), do: "#{map_id}-marker-#{index}"
   defp dom_id(map_id, id, _index), do: "#{map_id}-marker-#{id}"
 
+  defp shape_dom_id(type, map_id, nil, index), do: "#{map_id}-#{type}-#{index}"
+  defp shape_dom_id(type, map_id, id, _index), do: "#{map_id}-#{type}-#{id}"
+
   defp normalize_id(nil), do: nil
   defp normalize_id(id), do: to_string(id)
 
-  defp has_body?(marker_slot) do
-    Map.get(marker_slot, :inner_block) not in [nil, []]
+  defp project_points(points, zoom) do
+    Enum.map(points, fn point ->
+      latitude = parse_float(Map.fetch!(point, :latitude))
+      longitude = parse_float(Map.fetch!(point, :longitude))
+      {Tile.x(longitude, zoom), Tile.y(latitude, zoom)}
+    end)
+  end
+
+  defp points_attribute(points) do
+    Enum.map_join(points, " ", fn {x, y} -> "#{x},#{y}" end)
   end
 
   defp parse_float(value) when is_float(value), do: value

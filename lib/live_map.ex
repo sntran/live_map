@@ -25,6 +25,8 @@ defmodule LiveMap do
       |> assign_new(:zoom, fn -> 0 end)
       |> assign_new(:zoom_in, fn -> [] end)
       |> assign_new(:zoom_out, fn -> [] end)
+      |> assign_new(:polyline, fn -> [] end)
+      |> assign_new(:polygon, fn -> [] end)
       |> assign_new(:marker, fn -> [] end)
     }
   end
@@ -52,6 +54,7 @@ defmodule LiveMap do
       |> assign(:longitude, longitude)
       |> assign(:zoom, zoom)
       |> assign_tiles()
+      |> assign_shape_overlays()
       |> assign_marker_overlays()
     }
   end
@@ -65,10 +68,21 @@ defmodule LiveMap do
   attr :longitude, :any, default: 0.0
   attr :zoom, :any, default: 0
   attr :tiles, :list, default: []
+  attr :shape_overlays, :list, default: []
   attr :marker_overlays, :list, default: []
   slot :style
   slot :zoom_in
   slot :zoom_out
+  slot :polyline do
+    attr :id, :any
+    attr :points, :list, required: true
+    attr :label, :string
+  end
+  slot :polygon do
+    attr :id, :any
+    attr :points, :list, required: true
+    attr :label, :string
+  end
   slot :marker do
     attr :id, :any
     attr :latitude, :any, required: true
@@ -95,6 +109,8 @@ defmodule LiveMap do
      socket
      |> assign(:zoom, zoom + 1)
      |> assign_tiles()
+     |> assign_shape_overlays()
+     |> assign_marker_overlays()
     }
   end
 
@@ -111,6 +127,8 @@ defmodule LiveMap do
      socket
       |> assign(:zoom, zoom - 1)
       |> assign_tiles()
+      |> assign_shape_overlays()
+      |> assign_marker_overlays()
     }
   end
 
@@ -129,8 +147,30 @@ defmodule LiveMap do
     assign(socket, :tiles, tiles(socket.assigns))
   end
 
+  defp assign_shape_overlays(socket) do
+    assign(socket, :shape_overlays, shape_overlays(socket.assigns))
+  end
+
   defp assign_marker_overlays(socket) do
     assign(socket, :marker_overlays, marker_overlays(socket.assigns))
+  end
+
+  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom}) do
+    projected_polygons =
+      polygons
+      |> Enum.with_index()
+      |> Enum.map(fn {polygon, index} ->
+        Marker.project_shape(:polygon, polygon, map_id, zoom, index)
+      end)
+
+    projected_polylines =
+      polylines
+      |> Enum.with_index()
+      |> Enum.map(fn {polyline, index} ->
+        Marker.project_shape(:polyline, polyline, map_id, zoom, index)
+      end)
+
+    projected_polygons ++ projected_polylines
   end
 
   defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom}) do
@@ -182,5 +222,15 @@ defmodule LiveMap do
     %{x: min_x, y: min_y} = List.first(tiles)
     %{x: max_x, y: max_y} = List.last(tiles)
     "#{min_x} #{min_y} #{max_x + 1 - min_x} #{max_y + 1 - min_y}"
+  end
+
+  defp slot_content_present?(nil), do: false
+
+  defp slot_content_present?(slot_content) do
+    slot_content
+    |> Phoenix.HTML.Safe.to_iodata()
+    |> IO.iodata_to_binary()
+    |> String.trim()
+    |> Kernel.!=("")
   end
 end

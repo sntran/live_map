@@ -106,7 +106,7 @@ defmodule LiveMapTest do
       assert [_html_marker] = Floki.find(marker, "div[data-html-marker='center']")
     end
 
-    test "falls back to a default marker body and label when the slot body is empty" do
+    test "falls back to a default marker pin with an accessible label when the slot body is empty" do
       rendered = component_with_markers([
         %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
       ], marker_body: :none)
@@ -114,8 +114,58 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
 
-      assert [_circle] = Floki.find(marker, "circle")
-      assert Floki.find(marker, "text") |> Floki.text() |> String.trim() === "Center marker"
+      assert [_pin] = Floki.find(marker, "path.live-map-marker-pin")
+      assert [_pin_center] = Floki.find(marker, "circle.live-map-marker-pin-center")
+      assert Floki.find(marker, "title") |> Floki.text() === "Center marker"
+    end
+
+    test "falls back to the default marker pin when the slot body is blank" do
+      rendered = component_with_markers([
+        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+      ], marker_body: :blank)
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+
+      assert [_pin] = Floki.find(marker, "path.live-map-marker-pin")
+      refute Floki.find(marker, "foreignobject") |> Enum.any?()
+    end
+
+    test "renders projected polylines inside a dedicated shape layer" do
+      rendered =
+        component_with_shapes([
+          %{id: "route", points: [%{latitude: 0, longitude: 0}, %{latitude: 0, longitude: 10}]}
+        ])
+
+      {:ok, document} = Floki.parse_document(rendered)
+
+      assert [_shape_layer] = Floki.find(document, "svg.live-map-shapes")
+      [polyline] = Floki.find(document, "polyline#live-map-polyline-route")
+      assert Floki.attribute(polyline, "points") === ["0.5,0.5 0.5277777777777778,0.5"]
+    end
+
+    test "renders projected polygons inside a dedicated shape layer" do
+      rendered =
+        component_with_shapes([],
+          polygons: [
+            %{
+              id: "district",
+              points: [
+                %{latitude: 0, longitude: 0},
+                %{latitude: 0, longitude: 10},
+                %{latitude: 10, longitude: 10}
+              ]
+            }
+          ]
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+
+      [polygon] = Floki.find(document, "polygon#live-map-polygon-district")
+
+      assert Floki.attribute(polygon, "points") === [
+               "0.5,0.5 0.5277777777777778,0.5 0.5277777777777778,0.47208011206491635"
+             ]
     end
 
   end
@@ -384,6 +434,16 @@ defmodule LiveMapTest do
           longitude={marker.longitude}
           label={marker.label}
         />
+
+        <:marker
+          :if={@marker_body == :blank}
+          :for={marker <- @markers}
+          id={marker.id}
+          latitude={marker.latitude}
+          longitude={marker.longitude}
+          label={marker.label}
+        >
+        </:marker>
       </.live_component>
       """
     end, assigns)
@@ -400,6 +460,47 @@ defmodule LiveMapTest do
         <:zoom_out>
           <span data-zoom-control="out">-</span>
         </:zoom_out>
+      </.live_component>
+      """
+    end, assigns)
+  end
+
+  defp component_with_shapes(polylines, assigns \\ []) do
+    defaults = %{
+      id: "live-map",
+      width: 300,
+      height: 150,
+      latitude: 0,
+      longitude: 0,
+      zoom: 0,
+      polylines: polylines,
+      polygons: []
+    }
+
+    assigns = Map.merge(defaults, Enum.into(assigns, %{}))
+
+    render_component(fn assigns ->
+      ~H"""
+      <.live_component
+        module={LiveMap}
+        id={@id}
+        width={@width}
+        height={@height}
+        latitude={@latitude}
+        longitude={@longitude}
+        zoom={@zoom}
+      >
+        <:polyline
+          :for={polyline <- @polylines}
+          id={polyline.id}
+          points={polyline.points}
+        />
+
+        <:polygon
+          :for={polygon <- @polygons}
+          id={polygon.id}
+          points={polygon.points}
+        />
       </.live_component>
       """
     end, assigns)

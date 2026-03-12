@@ -41,6 +41,55 @@
     viewBox={viewbox(@tiles)}
     preserveAspectRatio="xMidYMid slice"
     overflow="visible"
+    class="live-map-shapes"
+    data-live-map-shapes="true"
+    :if={@shape_overlays != []}
+  >
+    <title>Shape Layer</title>
+
+    <%= for shape <- @shape_overlays do %>
+      <%= if shape.type == :polygon do %>
+        <polygon
+          id={shape.dom_id}
+          class="live-map-polygon"
+          data-live-map-shape="true"
+          data-live-map-shape-type="polygon"
+          data-live-map-shape-id={shape.id}
+          points={shape.points_attribute}
+          fill="rgba(2,132,199,0.18)"
+          stroke="#0284c7"
+          stroke-width="0.0078125"
+        >
+          <title :if={shape.label}>{shape.label}</title>
+        </polygon>
+      <% else %>
+        <polyline
+          id={shape.dom_id}
+          class="live-map-polyline"
+          data-live-map-shape="true"
+          data-live-map-shape-type="polyline"
+          data-live-map-shape-id={shape.id}
+          points={shape.points_attribute}
+          fill="none"
+          stroke="#0284c7"
+          stroke-width="0.0078125"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <title :if={shape.label}>{shape.label}</title>
+        </polyline>
+      <% end %>
+    <% end %>
+  </svg>
+
+  <svg
+    x="0"
+    y="0"
+    width={@width}
+    height={@height}
+    viewBox={viewbox(@tiles)}
+    preserveAspectRatio="xMidYMid slice"
+    overflow="visible"
     class="live-map-markers"
     data-live-map-markers="true"
   >
@@ -56,7 +105,9 @@
     >
       <title>{marker.label}</title>
 
-      <%= if marker.has_body do %>
+      <% marker_body = if marker.slot.inner_block, do: render_slot(marker.slot), else: nil %>
+
+      <%= if slot_content_present?(marker_body) do %>
         <foreignObject
           x="12"
           y="-12"
@@ -70,22 +121,28 @@
             class="live-map-marker-html"
             style="pointer-events: auto; display: inline-block;"
           >
-            {render_slot(marker.slot)}
+            {marker_body}
           </div>
         </foreignObject>
       <% else %>
-        <circle cx="0" cy="0" r="9" fill="#0284c7" stroke="white" stroke-width="3" />
-        <text x="14" y="5" fill="#0f172a" font-size="14" font-weight="600">
-          {marker.label}
-        </text>
+        <path
+          class="live-map-marker-pin"
+          d="M0 -28C-5.523 -28 -10 -23.523 -10 -18c0 7.5 10 18 10 18s10 -10.5 10 -18c0 -5.523 -4.477 -10 -10 -10Z"
+          fill="#DB4437"
+          stroke="white"
+          stroke-width="1.75"
+          stroke-linejoin="round"
+        />
+        <circle class="live-map-marker-pin-center" cx="0" cy="-18" r="4.5" fill="#A52714" />
       <% end %>
     </g>
   </svg>
 
-  <g transform={"translate(#{@width - 24 - 16},#{@height - 24 - 16 - 24})"}>
-    <rect x="0" y="0" width="24" height="48" rx="5" ry="5" fill="white" />
+  <g :if={@zoom_in != [] or @zoom_out != []} transform={"translate(#{@width - 24 - 16},#{@height - 24 - 16 - 24})"}>
+    <rect x="0" y="0" width="24" height={if(@zoom_in != [] and @zoom_out != [], do: 48, else: 24)} rx="5" ry="5" fill="white" />
 
     <g
+      :if={@zoom_in != []}
       role="button"
       tabindex="0"
       aria-label="Zoom In"
@@ -98,29 +155,26 @@
       phx-throttle="500"
       phx-target={@myself}
     >
-      <%= if @zoom_in != [] do %>
-        <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
-          <div
-            xmlns="http://www.w3.org/1999/xhtml"
-            style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
-          >
-            {render_slot(@zoom_in)}
-          </div>
-        </foreignObject>
-      <% else %>
-        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-      <% end %>
+      <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
+        <div
+          xmlns="http://www.w3.org/1999/xhtml"
+          style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+        >
+          {render_slot(@zoom_in)}
+        </div>
+      </foreignObject>
 
       <rect x="0" y="0" width="24" height="24" fill="none" />
     </g>
 
     <g
+      :if={@zoom_out != []}
       role="button"
       tabindex="0"
       aria-label="Zoom Out"
       width="24"
       height="24"
-      transform="translate(0,24)"
+      transform={if(@zoom_in != [], do: "translate(0,24)", else: nil)}
       cursor="pointer"
       pointer-events="all"
       phx-click="zoom_out"
@@ -128,18 +182,14 @@
       phx-throttle="500"
       phx-target={@myself}
     >
-      <%= if @zoom_out != [] do %>
-        <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
-          <div
-            xmlns="http://www.w3.org/1999/xhtml"
-            style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
-          >
-            {render_slot(@zoom_out)}
-          </div>
-        </foreignObject>
-      <% else %>
-        <path d="M19 13H5v-2h14v2z" />
-      <% end %>
+      <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
+        <div
+          xmlns="http://www.w3.org/1999/xhtml"
+          style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+        >
+          {render_slot(@zoom_out)}
+        </div>
+      </foreignObject>
 
       <rect x="0" y="0" width="24" height="24" fill="none" />
     </g>
