@@ -8,13 +8,12 @@ defmodule LiveMap.View do
 
   def mount(params, _session, socket) do
     {:ok,
-      socket
-      |> assign_new(:width, fn -> params["width"] || 300 end)
-      |> assign_new(:height, fn -> params["height"] || 150 end)
-      |> assign_new(:latitude, fn -> params["latitude"] || 0 end)
-      |> assign_new(:longitude, fn -> params["longitude"] || 0 end)
-      |> assign_new(:zoom, fn -> params["zoom"] || 0 end)
-    }
+     socket
+     |> assign_new(:width, fn -> params["width"] || 300 end)
+     |> assign_new(:height, fn -> params["height"] || 150 end)
+     |> assign_new(:latitude, fn -> params["latitude"] || 0 end)
+     |> assign_new(:longitude, fn -> params["longitude"] || 0 end)
+     |> assign_new(:zoom, fn -> params["zoom"] || 0 end)}
   end
 
   def render(assigns) do
@@ -24,6 +23,8 @@ defmodule LiveMap.View do
       width={@width} height={@height}
       latitude={@latitude} longitude={@longitude} zoom={@zoom}
     >
+      <:zoom_in>+</:zoom_in>
+      <:zoom_out>-</:zoom_out>
     </.live_component>
     """
   end

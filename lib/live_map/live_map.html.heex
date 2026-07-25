@@ -15,30 +15,72 @@
   </style>
 
   <svg
+    id={"#{@id}-tiles"}
     x="0"
     y="0"
     width={@width}
     height={@height}
-    viewBox={viewbox(@tiles)}
+    viewBox={LiveMap.viewbox(@latitude, @longitude, @zoom, @width, @height)}
     preserveAspectRatio="xMidYMid slice"
   >
     <title>Tile Layer</title>
 
-    <image :for={tile <- @tiles}
-      href={"https://tile.openstreetmap.org/#{@zoom}/#{tile.x}/#{tile.y}.png"}
+    <defs :if={@tile_layer.defs != []}>
+      <%= for definition <- @tile_layer.defs do %>
+        <%= definition %>
+      <% end %>
+    </defs>
+
+    <image
+      :for={tile <- @tile_layer.tiles}
+      :if={tile.type == :image}
+      href={tile.href}
       x={tile.x}
       y={tile.y}
-      width="1"
-      height="1"
+      width={tile.width}
+      height={tile.height}
+    />
+
+    <svg
+      :for={tile <- @tile_layer.tiles}
+      :if={tile.type == :svg_use}
+      x={tile.x}
+      y={tile.y}
+      width={tile.width}
+      height={tile.height}
+      viewBox={tile.view_box}
+      preserveAspectRatio="none"
+      overflow="hidden"
+      data-live-map-tile-state={tile.state}
+      data-live-map-source-tile={tile.source_tile}
+    >
+      <use href={"##{tile.def_id}"} x="0" y="0" width="1" height="1" />
+    </svg>
+
+    <svg
+      :for={tile <- @tile_layer.tiles}
+      :if={tile.type == :error}
+      x={tile.x}
+      y={tile.y}
+      width={tile.width}
+      height={tile.height}
+      viewBox="0 0 1 1"
+      preserveAspectRatio="none"
+      overflow="hidden"
+      data-live-map-tile-state={tile.state}
+      data-live-map-source-tile={tile.source_tile}
+      data-live-map-tile-error-kind={tile.error_kind}
+      data-live-map-tile-error-reason={tile.error_reason}
     />
   </svg>
 
   <svg
+    id={"#{@id}-shapes"}
     x="0"
     y="0"
     width={@width}
     height={@height}
-    viewBox={viewbox(@tiles)}
+    viewBox={LiveMap.viewbox(@latitude, @longitude, @zoom, @width, @height)}
     preserveAspectRatio="xMidYMid slice"
     overflow="visible"
     class="live-map-shapes"
@@ -83,11 +125,12 @@
   </svg>
 
   <svg
+    id={"#{@id}-markers"}
     x="0"
     y="0"
     width={@width}
     height={@height}
-    viewBox={viewbox(@tiles)}
+    viewBox={LiveMap.viewbox(@latitude, @longitude, @zoom, @width, @height)}
     preserveAspectRatio="xMidYMid slice"
     overflow="visible"
     class="live-map-markers"

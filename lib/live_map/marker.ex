@@ -17,6 +17,7 @@ defmodule LiveMap.Marker do
       id: id,
       dom_id: dom_id(map_id, id, index),
       label: label,
+      has_body: Map.get(marker_slot, :inner_block) != nil,
       latitude: latitude,
       longitude: longitude,
       x: x,

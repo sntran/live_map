@@ -9,7 +9,6 @@ defmodule LiveMapTest do
   @endpoint LiveMapTestApp.Endpoint
 
   describe "component" do
-
     test "renders component as an SVG" do
       assert component() =~ "</svg>"
     end
@@ -70,9 +69,10 @@ defmodule LiveMapTest do
     end
 
     test "projects marker slots into map coordinates" do
-      rendered = component_with_markers([
-        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
-      ])
+      rendered =
+        component_with_markers([
+          %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+        ])
 
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
@@ -81,9 +81,13 @@ defmodule LiveMapTest do
     end
 
     test "uses marker labels for accessibility and custom HTML slot bodies without :let" do
-      rendered = component_with_markers([
-        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
-      ], marker_body: :html)
+      rendered =
+        component_with_markers(
+          [
+            %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+          ],
+          marker_body: :html
+        )
 
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
@@ -95,9 +99,13 @@ defmodule LiveMapTest do
     end
 
     test "wraps HTML marker bodies in a foreignObject" do
-      rendered = component_with_markers([
-        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
-      ], marker_body: :html)
+      rendered =
+        component_with_markers(
+          [
+            %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+          ],
+          marker_body: :html
+        )
 
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
@@ -107,9 +115,13 @@ defmodule LiveMapTest do
     end
 
     test "falls back to a default marker pin with an accessible label when the slot body is empty" do
-      rendered = component_with_markers([
-        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
-      ], marker_body: :none)
+      rendered =
+        component_with_markers(
+          [
+            %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+          ],
+          marker_body: :none
+        )
 
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
@@ -120,9 +132,13 @@ defmodule LiveMapTest do
     end
 
     test "falls back to the default marker pin when the slot body is blank" do
-      rendered = component_with_markers([
-        %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
-      ], marker_body: :blank)
+      rendered =
+        component_with_markers(
+          [
+            %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+          ],
+          marker_body: :blank
+        )
 
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
@@ -167,7 +183,6 @@ defmodule LiveMapTest do
                "0.5,0.5 0.5277777777777778,0.5 0.5277777777777778,0.47208011206491635"
              ]
     end
-
   end
 
   describe "tiles" do
@@ -181,10 +196,32 @@ defmodule LiveMapTest do
       rendered = component(zoom: 0)
       {:ok, document} = Floki.parse_document(rendered)
       assert [tile] = Floki.find(document, "image")
+      assert Floki.attribute(tile, "href") === ["https://tile.openstreetmap.org/0/0/0.png"]
       assert Floki.attribute(tile, "x") === ["0"]
       assert Floki.attribute(tile, "y") === ["0"]
       assert Floki.attribute(tile, "width") === ["1"]
       assert Floki.attribute(tile, "height") === ["1"]
+    end
+
+    test "expands a custom raster tile source" do
+      rendered =
+        component(
+          zoom: 1,
+          tile_source: %{
+            type: :raster,
+            url: "https://tiles.example.com/{zoom}/{x}/{y}.png?level={z}"
+          }
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+      tiles = Floki.find(document, "image")
+
+      assert Enum.map(tiles, &Floki.attribute(&1, "href")) === [
+               ["https://tiles.example.com/1/0/0.png?level=1"],
+               ["https://tiles.example.com/1/0/1.png?level=1"],
+               ["https://tiles.example.com/1/1/0.png?level=1"],
+               ["https://tiles.example.com/1/1/1.png?level=1"]
+             ]
     end
 
     test "should have 4 tiles at zoom 1" do
@@ -195,8 +232,8 @@ defmodule LiveMapTest do
 
       tiles
       |> Enum.with_index()
-      |> Enum.each(fn({tile, index}) ->
-        [x] =  Floki.attribute(tile, "x") |> Enum.map(&String.to_integer/1)
+      |> Enum.each(fn {tile, index} ->
+        [x] = Floki.attribute(tile, "x") |> Enum.map(&String.to_integer/1)
         [y] = Floki.attribute(tile, "y") |> Enum.map(&String.to_integer/1)
         assert x === div(index, 2), "tile's x should be the index divided by 2"
         assert y === rem(index, 2), "tile's y should be the modulo of the index and 2"
@@ -206,36 +243,40 @@ defmodule LiveMapTest do
     end
 
     property "tile layer" do
-      check all latitude <- StreamData.float(min: -89.9999, max: 89.9999),
-        longitude <- StreamData.float(min: -179.9999, max: 179.9999),
-        zoom <- StreamData.integer(1..18),
-        width <- StreamData.integer(),
-        height <- StreamData.integer() do
-
+      check all(
+              latitude <- StreamData.float(min: -89.9999, max: 89.9999),
+              longitude <- StreamData.float(min: -179.9999, max: 179.9999),
+              zoom <- StreamData.integer(1..18),
+              width <- StreamData.integer(1..2000),
+              height <- StreamData.integer(1..2000)
+            ) do
         tiles = LiveMap.tiles(latitude, longitude, zoom, width, height)
-        rendered = component(
-          latitude: latitude,
-          longitude: longitude,
-          zoom: zoom,
-          width: width,
-          height: height
-        )
+
+        rendered =
+          component(
+            latitude: latitude,
+            longitude: longitude,
+            zoom: zoom,
+            width: width,
+            height: height
+          )
 
         {:ok, document} = Floki.parse_document(rendered)
 
         layer_viewboxes = Floki.attribute(document, "svg > svg", "viewbox")
 
-        assert length(layer_viewboxes) === 2
-        assert Enum.uniq(layer_viewboxes) === [LiveMap.viewbox(tiles)]
+        assert Enum.uniq(layer_viewboxes) === [
+                 LiveMap.viewbox(latitude, longitude, zoom, width, height)
+               ]
 
         images = Floki.find(document, "image")
         assert length(images) === length(tiles)
 
         images
         |> Enum.with_index()
-        |> Enum.each(fn({image, index}) ->
+        |> Enum.each(fn {image, index} ->
           tile = Enum.at(tiles, index)
-          [x] =  Floki.attribute(image, "x") |> Enum.map(&String.to_integer/1)
+          [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_integer/1)
           [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_integer/1)
           assert x === tile.x, "image's x at #{x} should be the same as tile's x at #{tile.x}"
           assert y === tile.y, "image's y at #{y} should be the same as tile's y at #{tile.y}"
@@ -244,11 +285,9 @@ defmodule LiveMapTest do
         end)
       end
     end
-
   end
 
   describe "zoom" do
-
     setup do
       [conn: Phoenix.ConnTest.build_conn()]
     end
@@ -275,8 +314,8 @@ defmodule LiveMapTest do
 
       # Zoom in first to go to level 1.
       view
-        |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
-        |> render_click()
+      |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
+      |> render_click()
 
       # Clicks zoom out button to go back to level 0
       rendered =
@@ -368,7 +407,7 @@ defmodule LiveMapTest do
         |> render_keyup(%{"key" => "ArrowUp"})
 
       {:ok, document} = Floki.parse_document(rendered)
-       # There are still 4 tiles at zoom level 1
+      # There are still 4 tiles at zoom level 1
       assert [_, _, _, _] = Floki.find(document, "image")
 
       rendered =
@@ -377,10 +416,128 @@ defmodule LiveMapTest do
         |> render_keyup(%{"key" => "Enter"})
 
       {:ok, document} = Floki.parse_document(rendered)
-       # There is now 1 tile at zoom level 0
+      # There is now 1 tile at zoom level 0
       assert [_] = Floki.find(document, "image")
     end
+  end
 
+  describe "coordinate updates propagate to LiveMap component" do
+    test "viewBox updates when coordinates change" do
+      # Render the component at initial coordinates (0, 0)
+      initial_html =
+        render_component(LiveMap,
+          id: "test-map",
+          width: 300,
+          height: 150,
+          latitude: 0.0,
+          longitude: 0.0,
+          zoom: 1
+        )
+
+      {:ok, initial_doc} = Floki.parse_document(initial_html)
+      initial_viewboxes = get_layer_viewboxes(initial_doc)
+
+      # Render the component at updated coordinates
+      updated_html =
+        render_component(LiveMap,
+          id: "test-map",
+          width: 300,
+          height: 150,
+          latitude: 10.3458,
+          longitude: 107.0705,
+          zoom: 1
+        )
+
+      {:ok, updated_doc} = Floki.parse_document(updated_html)
+      updated_viewboxes = get_layer_viewboxes(updated_doc)
+
+      # The viewBox should reflect the new coordinates
+      assert initial_viewboxes != updated_viewboxes,
+             "viewBox should change when coordinates change.\n" <>
+               "Initial: #{inspect(initial_viewboxes)}\n" <>
+               "Updated: #{inspect(updated_viewboxes)}"
+    end
+
+    test "viewBox reflects correct center for given coordinates" do
+      rendered =
+        render_component(LiveMap,
+          id: "test-map",
+          width: 300,
+          height: 150,
+          latitude: 10.3458,
+          longitude: 107.0705,
+          zoom: 14
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+      viewboxes = get_layer_viewboxes(document)
+
+      # All layer viewboxes should use the same viewbox
+      assert length(Enum.uniq(viewboxes)) == 1,
+             "All layers should share the same viewBox, got: #{inspect(viewboxes)}"
+
+      # The viewBox should correspond to the given coordinates
+      expected_viewbox = LiveMap.viewbox(10.3458, 107.0705, 14, 300, 150)
+      assert hd(viewboxes) == expected_viewbox
+    end
+
+    test "update/2 properly marks assigns as changed when coordinates change" do
+      # This test directly exercises the update/2 path to verify that
+      # __changed__ tracking is correct after coordinate updates.
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          flash: %{}
+        },
+        endpoint: @endpoint
+      }
+
+      # First update with initial coordinates
+      {:ok, socket1} =
+        LiveMap.update(
+          %{
+            id: "test-map",
+            width: 300,
+            height: 150,
+            latitude: 0.0,
+            longitude: 0.0,
+            zoom: 1
+          },
+          socket
+        )
+
+      # Clear __changed__ to simulate the end of a render cycle
+      socket1 = %{socket1 | assigns: Map.put(socket1.assigns, :__changed__, %{})}
+
+      # Second update with changed coordinates
+      {:ok, socket2} =
+        LiveMap.update(
+          %{
+            id: "test-map",
+            width: 300,
+            height: 150,
+            latitude: 10.3458,
+            longitude: 107.0705,
+            zoom: 1
+          },
+          socket1
+        )
+
+      # Verify coordinates were actually updated
+      assert socket2.assigns[:latitude] == 10.3458, "latitude should be updated"
+      assert socket2.assigns[:longitude] == 107.0705, "longitude should be updated"
+
+      # Verify __changed__ includes the changed keys
+      changed = socket2.assigns[:__changed__]
+      assert changed != nil, "__changed__ should be present"
+
+      assert Map.has_key?(changed, :latitude),
+             "latitude should be marked as changed, __changed__ = #{inspect(changed)}"
+
+      assert Map.has_key?(changed, :longitude),
+             "longitude should be marked as changed, __changed__ = #{inspect(changed)}"
+    end
   end
 
   defp component(assigns \\ []) do
@@ -402,67 +559,73 @@ defmodule LiveMapTest do
 
     assigns = Map.merge(defaults, Enum.into(assigns, %{}))
 
-    render_component(fn assigns ->
-      ~H"""
-      <.live_component
-        module={LiveMap}
-        id={@id}
-        width={@width}
-        height={@height}
-        latitude={@latitude}
-        longitude={@longitude}
-        zoom={@zoom}
-      >
-        <:marker
-          :if={@marker_body == :html}
-          :for={marker <- @markers}
-          id={marker.id}
-          latitude={marker.latitude}
-          longitude={marker.longitude}
-          label={marker.label}
+    render_component(
+      fn assigns ->
+        ~H"""
+        <.live_component
+          module={LiveMap}
+          id={@id}
+          width={@width}
+          height={@height}
+          latitude={@latitude}
+          longitude={@longitude}
+          zoom={@zoom}
         >
-          <div data-html-marker={marker.id} class="rounded-full bg-sky-600 px-3 py-1 text-white">
-            {marker.label}
-          </div>
-        </:marker>
+          <:marker
+            :if={@marker_body == :html}
+            :for={marker <- @markers}
+            id={marker.id}
+            latitude={marker.latitude}
+            longitude={marker.longitude}
+            label={marker.label}
+          >
+            <div data-html-marker={marker.id} class="rounded-full bg-sky-600 px-3 py-1 text-white">
+              {marker.label}
+            </div>
+          </:marker>
 
-        <:marker
-          :if={@marker_body == :none}
-          :for={marker <- @markers}
-          id={marker.id}
-          latitude={marker.latitude}
-          longitude={marker.longitude}
-          label={marker.label}
-        />
+          <:marker
+            :if={@marker_body == :none}
+            :for={marker <- @markers}
+            id={marker.id}
+            latitude={marker.latitude}
+            longitude={marker.longitude}
+            label={marker.label}
+          />
 
-        <:marker
-          :if={@marker_body == :blank}
-          :for={marker <- @markers}
-          id={marker.id}
-          latitude={marker.latitude}
-          longitude={marker.longitude}
-          label={marker.label}
-        >
-        </:marker>
-      </.live_component>
-      """
-    end, assigns)
+          <:marker
+            :if={@marker_body == :blank}
+            :for={marker <- @markers}
+            id={marker.id}
+            latitude={marker.latitude}
+            longitude={marker.longitude}
+            label={marker.label}
+          >
+          </:marker>
+        </.live_component>
+        """
+      end,
+      assigns
+    )
   end
 
   defp component_with_zoom_controls(assigns \\ %{}) do
-    render_component(fn assigns ->
-      ~H"""
-      <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
-        <:zoom_in>
-          <span data-zoom-control="in">+</span>
-        </:zoom_in>
+    render_component(
+      fn assigns ->
+        ~H"""
+        <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
+          <:zoom_in>
+            <span data-zoom-control="in">+</span>
+          </:zoom_in>
 
-        <:zoom_out>
-          <span data-zoom-control="out">-</span>
-        </:zoom_out>
-      </.live_component>
-      """
-    end, assigns)
+          <:zoom_out>
+            <span data-zoom-control="out">-</span>
+          </:zoom_out>
+        </.live_component>
+        """
+      end,
+      assigns
+    )
   end
 
   defp component_with_shapes(polylines, assigns \\ []) do
@@ -479,30 +642,38 @@ defmodule LiveMapTest do
 
     assigns = Map.merge(defaults, Enum.into(assigns, %{}))
 
-    render_component(fn assigns ->
-      ~H"""
-      <.live_component
-        module={LiveMap}
-        id={@id}
-        width={@width}
-        height={@height}
-        latitude={@latitude}
-        longitude={@longitude}
-        zoom={@zoom}
-      >
-        <:polyline
-          :for={polyline <- @polylines}
-          id={polyline.id}
-          points={polyline.points}
-        />
+    render_component(
+      fn assigns ->
+        ~H"""
+        <.live_component
+          module={LiveMap}
+          id={@id}
+          width={@width}
+          height={@height}
+          latitude={@latitude}
+          longitude={@longitude}
+          zoom={@zoom}
+        >
+          <:polyline
+            :for={polyline <- @polylines}
+            id={polyline.id}
+            points={polyline.points}
+          />
 
-        <:polygon
-          :for={polygon <- @polygons}
-          id={polygon.id}
-          points={polygon.points}
-        />
-      </.live_component>
-      """
-    end, assigns)
+          <:polygon
+            :for={polygon <- @polygons}
+            id={polygon.id}
+            points={polygon.points}
+          />
+        </.live_component>
+        """
+      end,
+      assigns
+    )
+  end
+
+  defp get_layer_viewboxes(document) do
+    Floki.find(document, "svg > svg")
+    |> Enum.flat_map(&Floki.attribute(&1, "viewbox"))
   end
 end

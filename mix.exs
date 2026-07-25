@@ -17,15 +17,16 @@ defmodule LiveMap.MixProject do
       deps: deps(),
       docs: docs(),
       test_coverage: [
+        summary: [threshold: 95],
         ignore_modules: [
           LiveMap.CLI,
           LiveMapTestApp,
           LiveMapTestApp.Application,
           LiveMapTestApp.Endpoint,
           LiveMapTestApp.Router,
-          LiveMapTestApp.Router.Helpers,
-        ],
-      ],
+          LiveMapTestApp.Router.Helpers
+        ]
+      ]
     ]
   end
 
@@ -48,15 +49,14 @@ defmodule LiveMap.MixProject do
       ],
       maintainers: ["Trần Nguyễn Sơn"],
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url},
+      links: %{"GitHub" => @source_url}
     ]
   end
-
 
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger]
     ]
   end
 
@@ -71,8 +71,9 @@ defmodule LiveMap.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:phoenix_live_view, "~> 1.1"},
+      {:phoenix_live_view, ">= 0.19.0 and < 2.0.0"},
       {:jason, "~> 1.4"},
+      {:req, "~> 0.6.2", optional: true},
 
       # Test/dev deps
       {:plug_cowboy, "~> 2.8", only: :test},
@@ -81,7 +82,7 @@ defmodule LiveMap.MixProject do
       {:stream_data, "~> 1.3", only: :test},
 
       # Docs deps
-      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]
   end
 
@@ -89,7 +90,7 @@ defmodule LiveMap.MixProject do
     [
       main: "LiveMap",
       source_url: @source_url,
-      extras: ["README.md"],
+      extras: ["README.md"]
     ]
   end
 end

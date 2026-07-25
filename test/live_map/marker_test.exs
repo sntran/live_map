@@ -37,6 +37,44 @@ defmodule LiveMap.MarkerTest do
     assert polyline.type === :polyline
   end
 
+  test "uses fallback DOM ids and preserves float coordinates" do
+    marker =
+      Marker.project(
+        %{latitude: 1.5, longitude: 2.5, label: "Float marker", inner_block: fn -> nil end},
+        "live-map",
+        1,
+        3
+      )
+
+    polygon =
+      Marker.project_shape(
+        :polygon,
+        %{
+          points: [
+            %{latitude: 0.0, longitude: 0.0},
+            %{latitude: 0.0, longitude: 1.0},
+            %{latitude: 1.0, longitude: 1.0}
+          ]
+        },
+        "live-map",
+        0,
+        2
+      )
+
+    assert marker.id === nil
+    assert marker.dom_id === "live-map-marker-3"
+    assert marker.has_body === true
+    assert marker.latitude === 1.5
+    assert marker.longitude === 2.5
+    assert polygon.dom_id === "live-map-polygon-2"
+  end
+
+  test "raises on invalid marker coordinates" do
+    assert_raise ArgumentError, ~r/invalid marker coordinate/, fn ->
+      Marker.project(%{latitude: "north", longitude: 0, label: "Bad marker"}, "live-map", 0, 0)
+    end
+  end
+
   test "projects polygon points into SVG point coordinates" do
     polygon =
       Marker.project_shape(
@@ -55,8 +93,10 @@ defmodule LiveMap.MarkerTest do
       )
 
     assert polygon.dom_id === "live-map-polygon-district"
+
     assert polygon.points_attribute ===
              "0.5,0.5 0.5277777777777778,0.5 0.5277777777777778,0.47208011206491635"
+
     assert polygon.type === :polygon
   end
 end
