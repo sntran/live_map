@@ -170,6 +170,11 @@ defmodule LiveMap do
     IO.puts("Fetching #{length(tiles)} tiles!")
     tile_layer = Tile.prepare_layer(tiles, assigns[:tile_source])
 
+    center_x = Tile.x(longitude, zoom) * 256.0
+    center_y = Tile.y(latitude, zoom) * 256.0
+    min_x = center_x - width / 2.0
+    min_y = center_y - height / 2.0
+
     base_assigns =
       assigns
       |> Map.put(:width, width)
@@ -177,11 +182,13 @@ defmodule LiveMap do
       |> Map.put(:latitude, latitude)
       |> Map.put(:longitude, longitude)
       |> Map.put(:zoom, zoom)
+      |> Map.put(:min_x, min_x)
+      |> Map.put(:min_y, min_y)
       |> Map.put(:tile_source, tile_layer.source)
       |> Map.put(:tiles, tiles)
       |> Map.put(:tile_layer, Map.take(tile_layer, [:defs, :tiles]))
-      |> Map.put(:shape_overlays, shape_overlays(%{assigns | zoom: zoom}))
-      |> Map.put(:marker_overlays, marker_overlays(%{assigns | zoom: zoom}))
+      |> Map.put(:shape_overlays, shape_overlays(%{assigns | zoom: zoom}, min_x, min_y))
+      |> Map.put(:marker_overlays, marker_overlays(%{assigns | zoom: zoom}, min_x, min_y))
       |> Map.put(:live_map_prepared, true)
 
     put_assigns(socket_or_assigns, base_assigns)
@@ -199,36 +206,36 @@ defmodule LiveMap do
   end
 
   defp assign_shape_overlays(socket) do
-    assign(socket, :shape_overlays, shape_overlays(socket.assigns))
+    assign(socket, :shape_overlays, shape_overlays(socket.assigns, socket.assigns.min_x, socket.assigns.min_y))
   end
 
   defp assign_marker_overlays(socket) do
-    assign(socket, :marker_overlays, marker_overlays(socket.assigns))
+    assign(socket, :marker_overlays, marker_overlays(socket.assigns, socket.assigns.min_x, socket.assigns.min_y))
   end
 
-  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom}) do
+  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom}, min_x, min_y) do
     projected_polygons =
       polygons
       |> Enum.with_index()
       |> Enum.map(fn {polygon, index} ->
-        Marker.project_shape(:polygon, polygon, map_id, zoom, index)
+        Marker.project_shape(:polygon, polygon, map_id, zoom, min_x, min_y, index)
       end)
 
     projected_polylines =
       polylines
       |> Enum.with_index()
       |> Enum.map(fn {polyline, index} ->
-        Marker.project_shape(:polyline, polyline, map_id, zoom, index)
+        Marker.project_shape(:polyline, polyline, map_id, zoom, min_x, min_y, index)
       end)
 
     projected_polygons ++ projected_polylines
   end
 
-  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom}) do
+  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom}, min_x, min_y) do
     markers
     |> Enum.with_index()
     |> Enum.map(fn {marker, index} ->
-      Marker.project(marker, map_id, zoom, index)
+      Marker.project(marker, map_id, zoom, min_x, min_y, index)
     end)
   end
 
@@ -261,7 +268,7 @@ defmodule LiveMap do
       "0 0 0 0"
 
       iex> LiveMap.viewbox([%{x: 0, y: 0}])
-      "0 0 1 1"
+      "0 0 256 256"
 
       iex> LiveMap.viewbox([
       ...>   %{x: 0, y: 0},
@@ -269,7 +276,7 @@ defmodule LiveMap do
       ...>   %{x: 1, y: 0},
       ...>   %{x: 1, y: 1}
       ...> ])
-      "0 0 2 2"
+      "0 0 512 512"
 
   """
   @spec viewbox(list(Tile.t())) :: String.t()
@@ -278,15 +285,15 @@ defmodule LiveMap do
   def viewbox(tiles) do
     %{x: min_x, y: min_y} = List.first(tiles)
     %{x: max_x, y: max_y} = List.last(tiles)
-    "#{min_x} #{min_y} #{max_x + 1 - min_x} #{max_y + 1 - min_y}"
+    "#{min_x * 256} #{min_y * 256} #{(max_x + 1 - min_x) * 256} #{(max_y + 1 - min_y) * 256}"
   end
 
   @doc false
   def viewbox(latitude, longitude, zoom, width, height) do
-    center_x = Tile.x(longitude, zoom)
-    center_y = Tile.y(latitude, zoom)
-    w = width / 256.0
-    h = height / 256.0
+    center_x = Tile.x(longitude, zoom) * 256.0
+    center_y = Tile.y(latitude, zoom) * 256.0
+    w = width
+    h = height
     min_x = center_x - w / 2.0
     min_y = center_y - h / 2.0
     "#{min_x} #{min_y} #{w} #{h}"

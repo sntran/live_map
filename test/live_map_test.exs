@@ -77,7 +77,7 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
 
-      assert Floki.attribute(marker, "transform") === ["translate(0.5,0.5) scale(0.00390625)"]
+      assert Floki.attribute(marker, "style") === ["transform: translate(150.0px, 75.0px) scale(1.0);"]
     end
 
     test "uses marker labels for accessibility and custom HTML slot bodies without :let" do
@@ -157,7 +157,7 @@ defmodule LiveMapTest do
 
       assert [_shape_layer] = Floki.find(document, "svg.live-map-shapes")
       [polyline] = Floki.find(document, "polyline#live-map-polyline-route")
-      assert Floki.attribute(polyline, "points") === ["0.5,0.5 0.5277777777777778,0.5"]
+      assert Floki.attribute(polyline, "points") === ["150.0,75.0 157.11,75.0"]
     end
 
     test "renders projected polygons inside a dedicated shape layer" do
@@ -180,7 +180,7 @@ defmodule LiveMapTest do
       [polygon] = Floki.find(document, "polygon#live-map-polygon-district")
 
       assert Floki.attribute(polygon, "points") === [
-               "0.5,0.5 0.5277777777777778,0.5 0.5277777777777778,0.47208011206491635"
+               "150.0,75.0 157.11,75.0 157.11,67.85"
              ]
     end
   end
@@ -197,10 +197,10 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       assert [tile] = Floki.find(document, "image")
       assert Floki.attribute(tile, "href") === ["https://tile.openstreetmap.org/0/0/0.png"]
-      assert Floki.attribute(tile, "x") === ["0"]
-      assert Floki.attribute(tile, "y") === ["0"]
-      assert Floki.attribute(tile, "width") === ["1"]
-      assert Floki.attribute(tile, "height") === ["1"]
+      assert Floki.attribute(tile, "x") === ["22.0"]
+      assert Floki.attribute(tile, "y") === ["-53.0"]
+      assert Floki.attribute(tile, "width") === ["256"]
+      assert Floki.attribute(tile, "height") === ["256"]
     end
 
     test "expands a custom raster tile source" do
@@ -233,12 +233,12 @@ defmodule LiveMapTest do
       tiles
       |> Enum.with_index()
       |> Enum.each(fn {tile, index} ->
-        [x] = Floki.attribute(tile, "x") |> Enum.map(&String.to_integer/1)
-        [y] = Floki.attribute(tile, "y") |> Enum.map(&String.to_integer/1)
-        assert x === div(index, 2), "tile's x should be the index divided by 2"
-        assert y === rem(index, 2), "tile's y should be the modulo of the index and 2"
-        assert Floki.attribute(tile, "width") === ["1"], "tile width should always be 1"
-        assert Floki.attribute(tile, "height") === ["1"], "tile height should always be 1"
+        [x] = Floki.attribute(tile, "x") |> Enum.map(&String.to_float/1)
+        [y] = Floki.attribute(tile, "y") |> Enum.map(&String.to_float/1)
+        assert x === div(index, 2) * 256 - 106.0, "tile's x should be relative to min_x"
+        assert y === rem(index, 2) * 256 - 181.0, "tile's y should be relative to min_y"
+        assert Floki.attribute(tile, "width") === ["256"], "tile width should always be 256"
+        assert Floki.attribute(tile, "height") === ["256"], "tile height should always be 256"
       end)
     end
 
@@ -266,7 +266,7 @@ defmodule LiveMapTest do
         layer_viewboxes = Floki.attribute(document, "svg > svg", "viewbox")
 
         assert Enum.uniq(layer_viewboxes) === [
-                 LiveMap.viewbox(latitude, longitude, zoom, width, height)
+                 "0 0 #{width} #{height}"
                ]
 
         images = Floki.find(document, "image")
@@ -276,12 +276,18 @@ defmodule LiveMapTest do
         |> Enum.with_index()
         |> Enum.each(fn {image, index} ->
           tile = Enum.at(tiles, index)
-          [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_integer/1)
-          [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_integer/1)
-          assert x === tile.x, "image's x at #{x} should be the same as tile's x at #{tile.x}"
-          assert y === tile.y, "image's y at #{y} should be the same as tile's y at #{tile.y}"
-          assert Floki.attribute(image, "width") === ["1"], "image width should always be 1"
-          assert Floki.attribute(image, "height") === ["1"], "image height should always be 1"
+          [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_float/1)
+          [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_float/1)
+          
+          center_x = LiveMap.Tile.x(longitude, zoom) * 256.0
+          center_y = LiveMap.Tile.y(latitude, zoom) * 256.0
+          min_x = center_x - width / 2.0
+          min_y = center_y - height / 2.0
+
+          assert_in_delta x, tile.x * 256 - min_x, 1.0e-5
+          assert_in_delta y, tile.y * 256 - min_y, 1.0e-5
+          assert Floki.attribute(image, "width") === ["256"], "image width should always be 256"
+          assert Floki.attribute(image, "height") === ["256"], "image height should always be 256"
         end)
       end
     end
@@ -452,10 +458,13 @@ defmodule LiveMapTest do
       updated_viewboxes = get_layer_viewboxes(updated_doc)
 
       # The viewBox should reflect the new coordinates
-      assert initial_viewboxes != updated_viewboxes,
-             "viewBox should change when coordinates change.\n" <>
-               "Initial: #{inspect(initial_viewboxes)}\n" <>
-               "Updated: #{inspect(updated_viewboxes)}"
+      # The viewBox should be static, but tile coordinates should change
+      assert initial_viewboxes == updated_viewboxes,
+             "viewBox should remain static."
+      
+      initial_tiles = Floki.find(initial_doc, "image") |> Enum.map(&Floki.attribute(&1, "x"))
+      updated_tiles = Floki.find(updated_doc, "image") |> Enum.map(&Floki.attribute(&1, "x"))
+      assert initial_tiles != updated_tiles, "Tiles should move when coordinates change"
     end
 
     test "viewBox reflects correct center for given coordinates" do
@@ -477,7 +486,7 @@ defmodule LiveMapTest do
              "All layers should share the same viewBox, got: #{inspect(viewboxes)}"
 
       # The viewBox should correspond to the given coordinates
-      expected_viewbox = LiveMap.viewbox(10.3458, 107.0705, 14, 300, 150)
+      expected_viewbox = "0 0 300 150"
       assert hd(viewboxes) == expected_viewbox
     end
 

@@ -3,15 +3,13 @@ defmodule LiveMap.Marker do
 
   alias LiveMap.Tile
 
-  @pixel_scale 1 / 256
-
-  def project(marker_slot, map_id, zoom, index) do
+  def project(marker_slot, map_id, zoom, min_x, min_y, index) do
     latitude = parse_float(marker_slot.latitude)
     longitude = parse_float(marker_slot.longitude)
     id = normalize_id(Map.get(marker_slot, :id))
     label = marker_slot.label
-    x = Tile.x(longitude, zoom)
-    y = Tile.y(latitude, zoom)
+    x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
+    y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
 
     %{
       id: id,
@@ -22,15 +20,15 @@ defmodule LiveMap.Marker do
       longitude: longitude,
       x: x,
       y: y,
-      scale: @pixel_scale,
+      scale: 1.0,
       slot: marker_slot
     }
   end
 
-  def project_shape(type, shape_slot, map_id, zoom, index) when type in [:polygon, :polyline] do
+  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index) when type in [:polygon, :polyline] do
     id = normalize_id(Map.get(shape_slot, :id))
     label = Map.get(shape_slot, :label)
-    points = project_points(Map.fetch!(shape_slot, :points), zoom)
+    points = project_points(Map.fetch!(shape_slot, :points), zoom, min_x, min_y)
 
     %{
       type: type,
@@ -51,11 +49,13 @@ defmodule LiveMap.Marker do
   defp normalize_id(nil), do: nil
   defp normalize_id(id), do: to_string(id)
 
-  defp project_points(points, zoom) do
+  defp project_points(points, zoom, min_x, min_y) do
     Enum.map(points, fn point ->
       latitude = parse_float(Map.fetch!(point, :latitude))
       longitude = parse_float(Map.fetch!(point, :longitude))
-      {Tile.x(longitude, zoom), Tile.y(latitude, zoom)}
+      x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
+      y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
+      {x, y}
     end)
   end
 

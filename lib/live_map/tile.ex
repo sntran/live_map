@@ -348,10 +348,10 @@ defmodule LiveMap.Tile do
   defp prepare_raster_tile(tile, source) do
     %{
       type: :image,
-      x: tile.x,
-      y: tile.y,
-      width: 1,
-      height: 1,
+      x: tile.x * 256,
+      y: tile.y * 256,
+      width: 256,
+      height: 256,
       href: expand_url(source, tile)
     }
   end
@@ -384,10 +384,10 @@ defmodule LiveMap.Tile do
       "live-map-vector-source-#{source_zoom}-#{source_tile.x}-#{source_tile.y}-#{short_hash(source_url)}"
 
     display_tile = %{
-      x: tile.x,
-      y: tile.y,
-      width: 1,
-      height: 1,
+      x: tile.x * 256,
+      y: tile.y * 256,
+      width: 256,
+      height: 256,
       source_tile: source_tile,
       view_box: child_view_box(tile, source_tile.z)
     }

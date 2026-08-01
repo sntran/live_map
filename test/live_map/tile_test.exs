@@ -41,8 +41,8 @@ defmodule LiveMap.TileTest do
                type: :image,
                x: 0,
                y: 0,
-               width: 1,
-               height: 1,
+               width: 256,
+               height: 256,
                href: "https://tiles.example.com/2/0/0.png?zoom=2"
              }
            ]
