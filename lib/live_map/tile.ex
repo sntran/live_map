@@ -217,14 +217,11 @@ defmodule LiveMap.Tile do
   @spec map(t(), number(), number(), function()) :: list()
   def map(center, width, height, mapper \\ &Function.identity/1)
 
-  # Special case for zoom level 0, in which the whole world is on 1 tile.
-  def map(%Tile{z: 0} = center, _width, _height, mapper), do: [mapper.(center)]
 
   def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper)
       when zoom >= 0 do
     half_width = 0.5 * abs(width) / @tile_size
     half_height = 0.5 * abs(height) / @tile_size
-    max_tile = 1 <<< zoom
 
     x_min = floor(center_x - half_width)
     y_min = floor(center_y - half_height)
@@ -234,16 +231,17 @@ defmodule LiveMap.Tile do
     if x_max <= x_min or y_max <= y_min do
       []
     else
+      n = 1 <<< zoom
+
       for x <- x_min..(x_max - 1),
           y <- y_min..(y_max - 1),
-          # x and y may have crossed the date line
-          tile_x = rem(x + max_tile, max_tile),
-          tile_y = rem(y + max_tile, max_tile) do
+          y >= 0,
+          y < n do
         mapper.(%Tile{
-          raw_x: tile_x,
-          raw_y: tile_y,
-          x: tile_x,
-          y: tile_y,
+          raw_x: x,
+          raw_y: y,
+          x: x,
+          y: y,
           z: zoom
         })
       end
@@ -287,7 +285,7 @@ defmodule LiveMap.Tile do
 
   """
   @spec prepare_layer(list(map()), map() | nil) :: prepared_tile_layer()
-  def prepare_layer(tiles, source) when is_list(tiles) do
+  def prepare_layer(tiles, source, custom_css \\ "") when is_list(tiles) do
     source = normalize_source(source)
 
     case source.type do
@@ -301,15 +299,15 @@ defmodule LiveMap.Tile do
       :mvt ->
         ensure_req!()
 
-        vector_layer = prepare_vector_layer(tiles, source)
+        vector_layer = prepare_vector_layer(tiles, source, custom_css)
         Map.put(vector_layer, :source, source)
     end
   end
 
-  defp prepare_vector_layer([], _source), do: %{defs: [], tiles: []}
+  defp prepare_vector_layer([], _source, _custom_css), do: %{defs: [], tiles: []}
 
-  defp prepare_vector_layer(tiles, source) do
-    requests = build_vector_requests(tiles, source)
+  defp prepare_vector_layer(tiles, source, custom_css) do
+    requests = build_vector_requests(tiles, source, custom_css)
     results = fetch_vector_results(requests)
 
     defs =
@@ -346,19 +344,23 @@ defmodule LiveMap.Tile do
   end
 
   defp prepare_raster_tile(tile, source) do
+    n = 1 <<< tile.z
+    fetch_x = rem(rem(tile.x, n) + n, n)
+    fetch_y = tile.y
+
     %{
       type: :image,
       x: tile.x * 256,
       y: tile.y * 256,
       width: 256,
       height: 256,
-      href: expand_url(source, tile)
+      href: expand_url(source, %{tile | x: fetch_x, y: fetch_y})
     }
   end
 
-  defp build_vector_requests(tiles, source) do
+  defp build_vector_requests(tiles, source, custom_css) do
     Enum.reduce(tiles, %{}, fn tile, requests ->
-      request = vector_request(tile, source)
+      request = vector_request(tile, source, custom_css)
 
       Map.update(requests, request.key, request, fn existing ->
         %{existing | display_tiles: existing.display_tiles ++ [request.display_tile]}
@@ -366,14 +368,18 @@ defmodule LiveMap.Tile do
     end)
   end
 
-  defp vector_request(tile, source) do
+  defp vector_request(tile, source, custom_css) do
     source_zoom = min(tile.z, source.max_zoom || tile.z)
     overzoom_levels = tile.z - source_zoom
     overzoom_scale = 1 <<< overzoom_levels
 
+    n = 1 <<< tile.z
+    fetch_x = rem(rem(tile.x, n) + n, n)
+    fetch_y = tile.y
+
     source_tile = %{
-      x: div(tile.x, overzoom_scale),
-      y: div(tile.y, overzoom_scale),
+      x: div(fetch_x, overzoom_scale),
+      y: div(fetch_y, overzoom_scale),
       z: source_zoom
     }
 
@@ -389,7 +395,7 @@ defmodule LiveMap.Tile do
       width: 256,
       height: 256,
       source_tile: source_tile,
-      view_box: child_view_box(tile, source_tile.z)
+      view_box: child_view_box(fetch_x, fetch_y, overzoom_scale)
     }
 
     %{
@@ -399,7 +405,8 @@ defmodule LiveMap.Tile do
       def_id: def_id,
       source_tile: source_tile,
       display_tile: display_tile,
-      display_tiles: [display_tile]
+      display_tiles: [display_tile],
+      custom_css: custom_css
     }
   end
 
@@ -423,8 +430,8 @@ defmodule LiveMap.Tile do
   defp fetch_vector_request(request) do
     result =
       case fetch_vector_body(request.url, request.headers) do
-        {:ok, body} ->
-          case MVT.decode(body, id_prefix: request.def_id) do
+      {:ok, body} ->
+          case MVT.decode(body, id_prefix: request.def_id, custom_css: request.custom_css) do
             {:ok, svg} ->
               {:ok, svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()}
 
@@ -659,11 +666,9 @@ defmodule LiveMap.Tile do
     """
   end
 
-  defp child_view_box(tile, source_zoom) do
-    overzoom_levels = tile.z - source_zoom
-    overzoom_scale = 1 <<< overzoom_levels
-    offset_x = rem(tile.x, overzoom_scale)
-    offset_y = rem(tile.y, overzoom_scale)
+  defp child_view_box(fetch_x, fetch_y, overzoom_scale) do
+    offset_x = rem(fetch_x, overzoom_scale)
+    offset_y = rem(fetch_y, overzoom_scale)
     scale = 1 / overzoom_scale
 
     [

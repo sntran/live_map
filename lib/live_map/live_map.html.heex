@@ -1,6 +1,7 @@
 <svg
   id={@id}
   class={@class}
+  data-live-map-zoom={@zoom}
   version="1.1"
   xmlns="http://www.w3.org/2000/svg"
   width={@width}
@@ -93,28 +94,30 @@
       <%= if shape.type == :polygon do %>
         <polygon
           id={shape.dom_id}
-          class="live-map-polygon"
+          class={["live-map-polygon", shape.class]}
+          style={shape.style}
           data-live-map-shape="true"
           data-live-map-shape-type="polygon"
           data-live-map-shape-id={shape.id}
           points={shape.points_attribute}
-          fill="rgba(2,132,199,0.18)"
-          stroke="#0284c7"
-          stroke-width="2"
+          fill={shape.fill || "rgba(2,132,199,0.18)"}
+          stroke={shape.stroke || "#0284c7"}
+          stroke-width={shape.stroke_width || "2"}
         >
           <title :if={shape.label}>{shape.label}</title>
         </polygon>
       <% else %>
         <polyline
           id={shape.dom_id}
-          class="live-map-polyline"
+          class={["live-map-polyline", shape.class]}
+          style={shape.style}
           data-live-map-shape="true"
           data-live-map-shape-type="polyline"
           data-live-map-shape-id={shape.id}
           points={shape.points_attribute}
-          fill="none"
-          stroke="#0284c7"
-          stroke-width="2"
+          fill={shape.fill || "none"}
+          stroke={shape.stroke || "#0284c7"}
+          stroke-width={shape.stroke_width || "2"}
           stroke-linecap="round"
           stroke-linejoin="round"
         >

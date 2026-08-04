@@ -11,7 +11,8 @@ defmodule LiveMap.MarkerTest do
         0,
         0,
         0,
-        0
+        0,
+        0.0
       )
 
     assert marker.id === "42"
@@ -31,7 +32,8 @@ defmodule LiveMap.MarkerTest do
         0,
         0,
         0,
-        0
+        0,
+        0.0
       )
 
     assert polyline.id === "route"
@@ -49,7 +51,8 @@ defmodule LiveMap.MarkerTest do
         1,
         0,
         0,
-        3
+        3,
+        0.0
       )
 
     polygon =
@@ -66,7 +69,8 @@ defmodule LiveMap.MarkerTest do
         0,
         0,
         0,
-        2
+        2,
+        0.0
       )
 
     assert marker.id === nil
@@ -79,7 +83,7 @@ defmodule LiveMap.MarkerTest do
 
   test "raises on invalid marker coordinates" do
     assert_raise ArgumentError, ~r/invalid marker coordinate/, fn ->
-      Marker.project(%{latitude: "north", longitude: 0, label: "Bad marker"}, "live-map", 0, 0, 0, 0)
+      Marker.project(%{latitude: "north", longitude: 0, label: "Bad marker"}, "live-map", 0, 0, 0, 0, 0.0)
     end
   end
 
@@ -99,7 +103,8 @@ defmodule LiveMap.MarkerTest do
         0,
         0,
         0,
-        0
+        0,
+        0.0
       )
 
     assert polygon.dom_id === "live-map-polygon-district"

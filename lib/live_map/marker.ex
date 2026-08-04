@@ -3,9 +3,12 @@ defmodule LiveMap.Marker do
 
   alias LiveMap.Tile
 
-  def project(marker_slot, map_id, zoom, min_x, min_y, index) do
+  def project(marker_slot, map_id, zoom, min_x, min_y, index, map_longitude) do
     latitude = parse_float(marker_slot.latitude)
-    longitude = parse_float(marker_slot.longitude)
+    raw_longitude = parse_float(marker_slot.longitude)
+    k = round((map_longitude - raw_longitude) / 360.0)
+    longitude = raw_longitude + k * 360.0
+
     id = normalize_id(Map.get(marker_slot, :id))
     label = marker_slot.label
     x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
@@ -25,10 +28,10 @@ defmodule LiveMap.Marker do
     }
   end
 
-  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index) when type in [:polygon, :polyline] do
+  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index, map_longitude) when type in [:polygon, :polyline] do
     id = normalize_id(Map.get(shape_slot, :id))
     label = Map.get(shape_slot, :label)
-    points = project_points(Map.fetch!(shape_slot, :points), zoom, min_x, min_y)
+    points = project_points(Map.fetch!(shape_slot, :points), zoom, min_x, min_y, map_longitude)
 
     %{
       type: type,
@@ -36,7 +39,12 @@ defmodule LiveMap.Marker do
       dom_id: shape_dom_id(type, map_id, id, index),
       label: label,
       points: points,
-      points_attribute: points_attribute(points)
+      points_attribute: points_attribute(points),
+      class: Map.get(shape_slot, :class),
+      style: Map.get(shape_slot, :style),
+      fill: Map.get(shape_slot, :fill),
+      stroke: Map.get(shape_slot, :stroke),
+      stroke_width: Map.get(shape_slot, :"stroke-width")
     }
   end
 
@@ -49,11 +57,57 @@ defmodule LiveMap.Marker do
   defp normalize_id(nil), do: nil
   defp normalize_id(id), do: to_string(id)
 
-  defp project_points(points, zoom, min_x, min_y) do
-    Enum.map(points, fn point ->
+  defp project_points(points, zoom, min_x, min_y, map_longitude) do
+    points
+    |> Enum.reduce({[], 0, nil}, fn point, {acc, longitude_offset, prev_lon} ->
       latitude = parse_float(Map.fetch!(point, :latitude))
-      longitude = parse_float(Map.fetch!(point, :longitude))
-      x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
+      raw_longitude = parse_float(Map.fetch!(point, :longitude))
+
+      {new_offset, prev_lon} =
+        case prev_lon do
+          nil ->
+            {longitude_offset, raw_longitude}
+
+          prev ->
+            delta = raw_longitude - prev
+
+            new_offset =
+              cond do
+                delta > 180 -> longitude_offset - 360
+                delta < -180 -> longitude_offset + 360
+                true -> longitude_offset
+              end
+
+            {new_offset, raw_longitude}
+        end
+
+      normalized_lon = raw_longitude + new_offset
+
+      {[{latitude, normalized_lon} | acc], new_offset, prev_lon}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+    |> shift_points_to_map_center(zoom, min_x, min_y, map_longitude)
+  end
+
+  defp shift_points_to_map_center([], _zoom, _min_x, _min_y, _map_longitude), do: []
+
+  defp shift_points_to_map_center(points, zoom, min_x, min_y, map_longitude) do
+    {min_lon, max_lon} =
+      Enum.reduce(points, {nil, nil}, fn {_, lon}, {min, max} ->
+        {
+          if(min, do: min(min, lon), else: lon),
+          if(max, do: max(max, lon), else: lon)
+        }
+      end)
+
+    center_lon = (min_lon + max_lon) / 2.0
+    k = round((map_longitude - center_lon) / 360.0)
+    global_offset = k * 360.0
+
+    Enum.map(points, fn {latitude, lon} ->
+      final_lon = lon + global_offset
+      x = Float.round(Tile.x(final_lon, zoom) * 256 - min_x, 2)
       y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
       {x, y}
     end)

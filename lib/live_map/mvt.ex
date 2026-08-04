@@ -465,8 +465,9 @@ defmodule LiveMap.MVT do
   defp render_svg(layers, binary, opts) do
     hash = short_hash(binary)
     id_prefix = Keyword.get(opts, :id_prefix, hash)
+    custom_css = Keyword.get(opts, :custom_css, "")
     clip_id = "live-map-mvt-clip-#{id_prefix}"
-    css = tile_css()
+    css = tile_css() <> "\n" <> custom_css
 
     groups =
       layers
@@ -507,8 +508,14 @@ defmodule LiveMap.MVT do
     Map.update(groups, group_key, contribution, &merge_group_geometry(&1, contribution))
   end
 
-  defp geometry_contribution(%{type: :point, geometry: points, extent: extent}) do
-    %{points: Enum.map(points, &normalize_point(&1, extent))}
+  defp geometry_contribution(%{type: :point, geometry: points, extent: extent} = feature) do
+    name = Map.get(feature.properties, "name:en") || Map.get(feature.properties, "name")
+
+    if name do
+      %{named_points: Enum.map(points, &{name, normalize_point(&1, extent)})}
+    else
+      %{points: Enum.map(points, &normalize_point(&1, extent))}
+    end
   end
 
   defp geometry_contribution(%{type: :line, geometry: parts, extent: extent}) do
@@ -538,30 +545,28 @@ defmodule LiveMap.MVT do
     ]
   end
 
-  defp render_group({_role, _geometry_type, _kind, _bridge?, _tunnel?, _layer} = key, %{
-         points: points
-       }) do
-    path_data = Enum.map(points, &point_path/1)
+  defp render_group({_role, geometry_type, _kind, _bridge?, _tunnel?, _layer} = key, group) do
+    points = Map.get(group, :points, [])
+    named_points = Map.get(group, :named_points, [])
+    paths = Map.get(group, :paths, [])
 
-    if path_data == [] do
-      nil
-    else
-      render_path(key, path_data, :point)
-    end
+    rendered_points =
+      if points != [] do
+        render_path(key, Enum.map(points, &point_path/1), :point)
+      end
+
+    rendered_named =
+      if named_points != [] do
+        render_texts(key, named_points)
+      end
+
+    rendered_paths =
+      if paths != [] do
+        render_path(key, paths, geometry_type)
+      end
+
+    [rendered_points, rendered_named, rendered_paths] |> Enum.reject(&is_nil/1)
   end
-
-  defp render_group({_role, geometry_type, _kind, _bridge?, _tunnel?, _layer} = key, %{
-         paths: paths
-       })
-       when geometry_type in [:line, :polygon] do
-    if paths == [] do
-      nil
-    else
-      render_path(key, paths, geometry_type)
-    end
-  end
-
-  defp render_group(_key, _group), do: nil
 
   defp render_path({role, _geometry_type, kind, bridge?, tunnel?, layer}, path_data, shape) do
     classes =
@@ -584,8 +589,46 @@ defmodule LiveMap.MVT do
       path_data,
       "\"",
       if(shape == :polygon, do: " fill-rule=\"evenodd\"", else: []),
-      "/>"
+      if(bridge?, do: " data-live-map-bridge", else: ""),
+      if(tunnel?, do: " data-live-map-tunnel", else: ""),
+      " />"
     ]
+  end
+
+  defp render_texts({role, _geometry_type, kind, bridge?, tunnel?, layer}, named_points) do
+    classes =
+      [
+        "live-map-shortbread-feature",
+        "live-map-shortbread-role-#{css_token(role)}",
+        "live-map-shortbread-shape-text",
+        "live-map-shortbread-layer-#{css_token(layer)}",
+        "live-map-shortbread-kind-#{css_token(kind)}",
+        if(bridge?, do: "live-map-shortbread-bridge", else: nil),
+        if(tunnel?, do: "live-map-shortbread-tunnel", else: nil)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" ")
+
+    Enum.map(named_points, fn {name, {x, y}} ->
+      [
+        "<text class=\"",
+        classes,
+        "\" x=\"",
+        to_string(x),
+        "\" y=\"",
+        to_string(y),
+        "\">",
+        escape_text(name),
+        "</text>"
+      ]
+    end)
+  end
+
+  defp escape_text(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
   end
 
   # CSS rules embedded inside each tile SVG document so they apply within the
@@ -594,6 +637,18 @@ defmodule LiveMap.MVT do
   # on ancestor elements still inherit through, so user overrides still work.
   @tile_css_content """
   .live-map-shortbread-shape-line { fill: none; }
+  .live-map-shortbread-shape-text {
+    fill: var(--live-map-text-fill, #333);
+    font-family: var(--live-map-text-font-family, sans-serif);
+    font-size: var(--live-map-text-font-size, 0.04px);
+    text-anchor: var(--live-map-text-anchor, middle);
+    dominant-baseline: var(--live-map-text-dominant-baseline, central);
+    paint-order: stroke;
+    stroke: var(--live-map-text-stroke, #fff);
+    stroke-width: var(--live-map-text-stroke-width, 0.01px);
+    pointer-events: none;
+  }
+  .live-map-shortbread-feature { stroke-linecap: round; stroke-linejoin: round; }
   .live-map-shortbread-shape-polygon { stroke: none; }
 
   .live-map-shortbread-role-water.live-map-shortbread-shape-polygon { fill: var(--live-map-water-polygon-fill, var(--live-map-water-fill, #9bd4f5)); stroke: var(--live-map-water-polygon-stroke, var(--live-map-water-stroke, none)); }

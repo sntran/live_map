@@ -52,6 +52,7 @@ defmodule LiveMap do
   attr(:latitude, :any, default: 0.0)
   attr(:longitude, :any, default: 0.0)
   attr(:zoom, :any, default: 0)
+  attr(:styles, :list, default: [])
   attr(:tile_source, :map, default: Tile.default_source())
   attr(:tiles, :list, default: [])
   attr(:tile_layer, :map, default: %{defs: [], tiles: []})
@@ -65,12 +66,22 @@ defmodule LiveMap do
     attr(:id, :any)
     attr(:points, :list, required: true)
     attr(:label, :string)
+    attr(:class, :any)
+    attr(:style, :any)
+    attr(:fill, :any)
+    attr(:stroke, :any)
+    attr(:"stroke-width", :any)
   end
 
   slot :polygon do
     attr(:id, :any)
     attr(:points, :list, required: true)
     attr(:label, :string)
+    attr(:class, :any)
+    attr(:style, :any)
+    attr(:fill, :any)
+    attr(:stroke, :any)
+    attr(:"stroke-width", :any)
   end
 
   slot :marker do
@@ -166,9 +177,9 @@ defmodule LiveMap do
     latitude = parse(assigns[:latitude] || 0.0, :float)
     longitude = parse(assigns[:longitude] || 0.0, :float)
     zoom = parse(assigns[:zoom] || 0, :integer)
+    styles = assigns[:styles] || []
     tiles = Tile.map(latitude, longitude, zoom, width, height)
-    IO.puts("Fetching #{length(tiles)} tiles!")
-    tile_layer = Tile.prepare_layer(tiles, assigns[:tile_source])
+    tile_layer = Tile.prepare_layer(tiles, assigns[:tile_source], LiveMap.Style.to_css(styles))
 
     center_x = Tile.x(longitude, zoom) * 256.0
     center_y = Tile.y(latitude, zoom) * 256.0
@@ -196,7 +207,8 @@ defmodule LiveMap do
 
   defp assign_tiles(socket) do
     tiles = tiles(socket.assigns)
-    tile_layer = Tile.prepare_layer(tiles, socket.assigns[:tile_source])
+    styles = socket.assigns[:styles] || []
+    tile_layer = Tile.prepare_layer(tiles, socket.assigns[:tile_source], LiveMap.Style.to_css(styles))
 
     socket
     |> assign(:tile_source, tile_layer.source)
@@ -213,29 +225,31 @@ defmodule LiveMap do
     assign(socket, :marker_overlays, marker_overlays(socket.assigns, socket.assigns.min_x, socket.assigns.min_y))
   end
 
-  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom}, min_x, min_y) do
+  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom} = assigns, min_x, min_y) do
+    map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
     projected_polygons =
       polygons
       |> Enum.with_index()
       |> Enum.map(fn {polygon, index} ->
-        Marker.project_shape(:polygon, polygon, map_id, zoom, min_x, min_y, index)
+        Marker.project_shape(:polygon, polygon, map_id, zoom, min_x, min_y, index, map_longitude)
       end)
 
     projected_polylines =
       polylines
       |> Enum.with_index()
       |> Enum.map(fn {polyline, index} ->
-        Marker.project_shape(:polyline, polyline, map_id, zoom, min_x, min_y, index)
+        Marker.project_shape(:polyline, polyline, map_id, zoom, min_x, min_y, index, map_longitude)
       end)
 
     projected_polygons ++ projected_polylines
   end
 
-  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom}, min_x, min_y) do
+  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom} = assigns, min_x, min_y) do
+    map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
     markers
     |> Enum.with_index()
     |> Enum.map(fn {marker, index} ->
-      Marker.project(marker, map_id, zoom, min_x, min_y, index)
+      Marker.project(marker, map_id, zoom, min_x, min_y, index, map_longitude)
     end)
   end
 
