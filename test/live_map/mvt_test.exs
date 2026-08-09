@@ -78,7 +78,7 @@ defmodule LiveMap.MVTTest do
     assert {:error, :truncated_geometry} = MVT.decode(tile)
   end
 
-  test "renders supported style variants across roles and kinds" do
+  test "renders supported roles and kinds with VersaTiles Colorful defaults" do
     assert {:ok, svg} = MVT.decode(style_matrix_tile())
 
     rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
@@ -98,10 +98,123 @@ defmodule LiveMap.MVTTest do
     refute rendered =~ ~s(fill="#)
     refute rendered =~ ~s(stroke="#)
     assert rendered =~ "<style>"
-    assert rendered =~ "#bfd7b5"
-    assert rendered =~ "#cbe3bc"
-    assert rendered =~ "#d8ccbe"
-    assert rendered =~ "#5aa7da"
+    assert rendered =~ "#f9f4ee"
+    assert rendered =~ "#beddf3"
+    assert rendered =~ "#66aa44"
+    assert rendered =~ "#f2eae2"
+    assert rendered =~ "#ffcc88"
+    assert rendered =~ "#a6a6c8"
+    assert rendered =~ "#333344"
+    assert rendered =~ ".live-map-shortbread-layer-pois.live-map-shortbread-shape-point"
+  end
+
+  test "uses Shortbread English names and applies conservative label defaults by zoom" do
+    keys = ["admin_level", "name", "name_en"]
+
+    values = [
+      value_message(:int, 2),
+      value_message(:int, 4),
+      value_message(:string, "Deutschland"),
+      value_message(:string, "Germany"),
+      value_message(:string, "Bayern"),
+      value_message(:string, "Bavaria")
+    ]
+
+    country =
+      feature_message([0, 0, 1, 2, 2, 3], 1, point_commands([{2, 2}]), 1)
+
+    state =
+      feature_message([0, 1, 1, 4, 2, 5], 1, point_commands([{6, 6}]), 2)
+
+    tile =
+      tile_message([
+        layer_message("boundary_labels", [country, state], keys, values, 8, 2)
+      ])
+
+    assert {:ok, overview_svg} = MVT.decode(tile, zoom: 2)
+    overview_rendered = overview_svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    refute overview_rendered =~
+             ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-2.live-map-shortbread-shape-text { display: inline;"
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 3)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert rendered =~ ~s(class="live-map-tile-svg live-map-zoom-3")
+    assert rendered =~ ~s(data-live-map-zoom="3")
+    assert rendered =~ ~s(live-map-shortbread-admin-level-2)
+    assert rendered =~ ~s(live-map-shortbread-admin-level-4)
+    assert rendered =~ ">Germany</text>"
+    assert rendered =~ ">Bavaria</text>"
+    refute rendered =~ ">Deutschland</text>"
+    refute rendered =~ ">Bayern</text>"
+
+    assert rendered =~
+             ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-2.live-map-shortbread-shape-text { display: inline;"
+
+    refute rendered =~
+             ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-4.live-map-shortbread-shape-text { display: inline;"
+
+    assert {:ok, zoomed_svg} = MVT.decode(tile, zoom: 7)
+    zoomed_rendered = zoomed_svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert zoomed_rendered =~
+             ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-4.live-map-shortbread-shape-text { display: inline;"
+  end
+
+  test "appends custom Google style CSS after built-in label defaults" do
+    tile =
+      single_feature_tile(
+        "place_labels",
+        ["kind", "name"],
+        [value_message(:string, "city"), value_message(:string, "Example City")],
+        [0, 0, 1, 1],
+        1,
+        point_commands([{4, 4}])
+      )
+
+    custom_css =
+      ".live-map-shortbread-layer-place-labels.live-map-shortbread-shape-text { display: block !important; }"
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 3, custom_css: custom_css)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert String.ends_with?(String.split(rendered, "</style>") |> hd(), custom_css)
+  end
+
+  test "sanitizes string admin levels and ignores unsupported admin metadata" do
+    keys = ["admin_level", "name"]
+
+    values = [
+      value_message(:string, "custom level"),
+      value_message(:bool, true),
+      value_message(:string, "String level"),
+      value_message(:string, "Unsupported level")
+    ]
+
+    string_level =
+      feature_message([0, 0, 1, 2], 1, point_commands([{2, 2}]), 1)
+
+    unsupported_level =
+      feature_message([0, 1, 1, 3], 1, point_commands([{6, 6}]), 2)
+
+    tile =
+      tile_message([
+        layer_message(
+          "boundary_labels",
+          [string_level, unsupported_level],
+          keys,
+          values,
+          8,
+          2
+        )
+      ])
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 3)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert rendered =~ "live-map-shortbread-admin-level-custom-level"
+    refute rendered =~ "live-map-shortbread-admin-level-true"
   end
 
   test "defaults missing layer extents to 4096" do
@@ -844,7 +957,7 @@ defmodule LiveMap.MVTTest do
       tile_message([
         layer_message(
           "large_points",
-          [feature_message([], 1, point_commands([{1000000, 200000000}, {2000000, 0}]), 1)],
+          [feature_message([], 1, point_commands([{1_000_000, 200_000_000}, {2_000_000, 0}]), 1)],
           [],
           [],
           4096,

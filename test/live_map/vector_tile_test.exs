@@ -119,6 +119,10 @@ defmodule LiveMap.VectorTileTest do
     assert length(layer.defs) === 1
     assert length(layer.tiles) === 2
 
+    [definition] = layer.defs
+    definition_svg = definition |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+    assert definition_svg =~ ~s(data-live-map-zoom="15")
+
     assert Enum.map(layer.tiles, fn tile -> IO.iodata_to_binary(tile.view_box) end) === [
              "0 0 0.5 0.5",
              "0.5 0 0.5 0.5"

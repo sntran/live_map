@@ -45,7 +45,11 @@ defmodule LiveMap.MVT do
       |> Enum.filter(fn {field_number, wire_type, _value} ->
         field_number == 3 and wire_type == 2
       end)
-      |> Task.async_stream(fn {_field_number, _wire_type, layer_binary} -> parse_layer(layer_binary) end, ordered: true, timeout: :infinity)
+      |> Task.async_stream(
+        fn {_field_number, _wire_type, layer_binary} -> parse_layer(layer_binary) end,
+        ordered: true,
+        timeout: :infinity
+      )
       |> Enum.map(fn {:ok, result} -> result end)
       |> collect_results()
     end
@@ -116,8 +120,10 @@ defmodule LiveMap.MVT do
     |> Enum.reduce_while({:ok, []}, fn
       {number, 2, packed_binary}, {:ok, acc} when number == field_number ->
         {:cont, {:ok, [packed_binary | acc]}}
+
       {number, 0, value}, {:ok, acc} when number == field_number ->
         {:cont, {:ok, [encode_varint(value) | acc]}}
+
       _other, acc ->
         {:cont, acc}
     end)
@@ -128,7 +134,7 @@ defmodule LiveMap.MVT do
   end
 
   defp encode_varint(value) when value < 128, do: <<value>>
-  defp encode_varint(value), do: <<(band(value, 127) ||| 128), encode_varint(value >>> 7)::binary>>
+  defp encode_varint(value), do: <<band(value, 127) ||| 128, encode_varint(value >>> 7)::binary>>
 
   defp decode_geometry(:point, commands), do: decode_points(commands, 0, 0, [])
   defp decode_geometry(:line, commands), do: decode_line_parts(commands, 0, 0, [], [])
@@ -453,19 +459,21 @@ defmodule LiveMap.MVT do
   defp parse_varint(<<0::1, v1::7, rest::binary>>), do: {:ok, v1, rest}
 
   defp parse_varint(<<1::1, v1::7, 0::1, v2::7, rest::binary>>) do
-    {:ok, v1 ||| (v2 <<< 7), rest}
+    {:ok, v1 ||| v2 <<< 7, rest}
   end
 
   defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 0::1, v3::7, rest::binary>>) do
-    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14), rest}
+    {:ok, v1 ||| v2 <<< 7 ||| v3 <<< 14, rest}
   end
 
   defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 1::1, v3::7, 0::1, v4::7, rest::binary>>) do
-    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14) ||| (v4 <<< 21), rest}
+    {:ok, v1 ||| v2 <<< 7 ||| v3 <<< 14 ||| v4 <<< 21, rest}
   end
 
-  defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 1::1, v3::7, 1::1, v4::7, 0::1, v5::7, rest::binary>>) do
-    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14) ||| (v4 <<< 21) ||| (v5 <<< 28), rest}
+  defp parse_varint(
+         <<1::1, v1::7, 1::1, v2::7, 1::1, v3::7, 1::1, v4::7, 0::1, v5::7, rest::binary>>
+       ) do
+    {:ok, v1 ||| v2 <<< 7 ||| v3 <<< 14 ||| v4 <<< 21 ||| v5 <<< 28, rest}
   end
 
   defp parse_varint(binary) do
@@ -479,11 +487,11 @@ defmodule LiveMap.MVT do
   end
 
   defp parse_varint_slow(<<0::1, v::7, rest::binary>>, shift, value) do
-    {:ok, value ||| (v <<< shift), rest}
+    {:ok, value ||| v <<< shift, rest}
   end
 
   defp parse_varint_slow(<<1::1, v::7, rest::binary>>, shift, value) do
-    parse_varint_slow(rest, shift + 7, value ||| (v <<< shift))
+    parse_varint_slow(rest, shift + 7, value ||| v <<< shift)
   end
 
   defp collect_results(results) do
@@ -505,8 +513,9 @@ defmodule LiveMap.MVT do
     hash = short_hash(binary)
     id_prefix = Keyword.get(opts, :id_prefix, hash)
     custom_css = Keyword.get(opts, :custom_css, "")
+    zoom = Keyword.get(opts, :zoom, 0)
     clip_id = "live-map-mvt-clip-#{id_prefix}"
-    css = tile_css() <> "\n" <> custom_css
+    css = Enum.join([tile_css(), default_label_css(zoom), custom_css], "\n")
 
     groups =
       layers
@@ -521,7 +530,11 @@ defmodule LiveMap.MVT do
 
     {:ok,
      [
-       "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\" preserveAspectRatio=\"none\" overflow=\"hidden\" class=\"live-map-tile-svg\" data-live-map-tile-format=\"mvt\">",
+       "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\" preserveAspectRatio=\"none\" overflow=\"hidden\" class=\"live-map-tile-svg live-map-zoom-",
+       Integer.to_string(zoom),
+       "\" data-live-map-tile-format=\"mvt\" data-live-map-zoom=\"",
+       Integer.to_string(zoom),
+       "\">",
        "<defs><clipPath id=\"",
        clip_id,
        "\"><rect x=\"0\" y=\"0\" width=\"1\" height=\"1\"/></clipPath></defs>",
@@ -541,14 +554,17 @@ defmodule LiveMap.MVT do
     kind = feature_kind(feature.properties)
     bridge? = truthy?(Map.get(feature.properties, "bridge"))
     tunnel? = truthy?(Map.get(feature.properties, "tunnel"))
-    group_key = {role, feature.type, kind, bridge?, tunnel?, feature.layer}
+    admin_level = Map.get(feature.properties, "admin_level")
+    group_key = {role, feature.type, kind, bridge?, tunnel?, feature.layer, admin_level}
     contribution = geometry_contribution(feature)
 
     Map.update(groups, group_key, contribution, &merge_group_geometry(&1, contribution))
   end
 
   defp geometry_contribution(%{type: :point, geometry: points, extent: extent} = feature) do
-    name = Map.get(feature.properties, "name:en") || Map.get(feature.properties, "name")
+    name =
+      Map.get(feature.properties, "name:en") || Map.get(feature.properties, "name_en") ||
+        Map.get(feature.properties, "name")
 
     if name do
       %{named_points: Enum.map(points, &{name, normalize_point(&1, extent)})}
@@ -584,7 +600,10 @@ defmodule LiveMap.MVT do
     ]
   end
 
-  defp render_group({_role, geometry_type, _kind, _bridge?, _tunnel?, _layer} = key, group) do
+  defp render_group(
+         {_role, geometry_type, _kind, _bridge?, _tunnel?, _layer, _admin_level} = key,
+         group
+       ) do
     points = Map.get(group, :points, [])
     named_points = Map.get(group, :named_points, [])
     paths = Map.get(group, :paths, [])
@@ -607,7 +626,11 @@ defmodule LiveMap.MVT do
     [rendered_points, rendered_named, rendered_paths] |> Enum.reject(&is_nil/1)
   end
 
-  defp render_path({role, _geometry_type, kind, bridge?, tunnel?, layer}, path_data, shape) do
+  defp render_path(
+         {role, _geometry_type, kind, bridge?, tunnel?, layer, admin_level},
+         path_data,
+         shape
+       ) do
     classes =
       [
         "live-map-shortbread-feature",
@@ -615,6 +638,7 @@ defmodule LiveMap.MVT do
         "live-map-shortbread-shape-#{css_token(shape)}",
         "live-map-shortbread-layer-#{css_token(layer)}",
         "live-map-shortbread-kind-#{css_token(kind)}",
+        admin_level_class(admin_level),
         if(bridge?, do: "live-map-shortbread-bridge", else: nil),
         if(tunnel?, do: "live-map-shortbread-tunnel", else: nil)
       ]
@@ -634,7 +658,10 @@ defmodule LiveMap.MVT do
     ]
   end
 
-  defp render_texts({role, _geometry_type, kind, bridge?, tunnel?, layer}, named_points) do
+  defp render_texts(
+         {role, _geometry_type, kind, bridge?, tunnel?, layer, admin_level},
+         named_points
+       ) do
     classes =
       [
         "live-map-shortbread-feature",
@@ -642,6 +669,7 @@ defmodule LiveMap.MVT do
         "live-map-shortbread-shape-text",
         "live-map-shortbread-layer-#{css_token(layer)}",
         "live-map-shortbread-kind-#{css_token(kind)}",
+        admin_level_class(admin_level),
         if(bridge?, do: "live-map-shortbread-bridge", else: nil),
         if(tunnel?, do: "live-map-shortbread-tunnel", else: nil)
       ]
@@ -674,68 +702,79 @@ defmodule LiveMap.MVT do
   # SVG <use> shadow DOM. Unlike the outer <style>, rules here resolve against
   # the tile's own document scope. CSS custom properties (--live-map-*) defined
   # on ancestor elements still inherit through, so user overrides still work.
+  # Adapted from the Unlicense-licensed VersaTiles Colorful style for
+  # Shortbread tiles. LiveMap keeps this as SVG CSS because it does not use a
+  # MapLibre renderer and therefore cannot consume the source style directly.
+  # https://github.com/versatiles-org/versatiles-style
   @tile_css_content """
   .live-map-shortbread-shape-line { fill: none; }
   .live-map-shortbread-shape-text {
-    fill: var(--live-map-text-fill, #333);
-    font-family: var(--live-map-text-font-family, sans-serif);
+    display: none;
+    fill: var(--live-map-text-fill, #333344);
+    font-family: var(--live-map-text-font-family, system-ui, sans-serif);
     font-size: var(--live-map-text-font-size, 0.04px);
+    font-weight: var(--live-map-text-font-weight, 500);
     text-anchor: var(--live-map-text-anchor, middle);
     dominant-baseline: var(--live-map-text-dominant-baseline, central);
     paint-order: stroke;
-    stroke: var(--live-map-text-stroke, #fff);
-    stroke-width: var(--live-map-text-stroke-width, 0.01px);
+    stroke: var(--live-map-text-stroke, #ffffff);
+    stroke-width: var(--live-map-text-stroke-width, 0.008px);
     pointer-events: none;
   }
   .live-map-shortbread-feature { stroke-linecap: round; stroke-linejoin: round; }
   .live-map-shortbread-shape-polygon { stroke: none; }
 
-  .live-map-shortbread-role-water.live-map-shortbread-shape-polygon { fill: var(--live-map-water-polygon-fill, var(--live-map-water-fill, #9bd4f5)); stroke: var(--live-map-water-polygon-stroke, var(--live-map-water-stroke, none)); }
-  .live-map-shortbread-role-water.live-map-shortbread-shape-line { stroke: var(--live-map-water-line-stroke, var(--live-map-water-stroke, #5aa7da)); stroke-width: var(--live-map-water-line-width, 0.0035); }
+  .live-map-shortbread-role-water.live-map-shortbread-shape-polygon { fill: var(--live-map-water-polygon-fill, var(--live-map-water-fill, #beddf3)); stroke: var(--live-map-water-polygon-stroke, var(--live-map-water-stroke, none)); }
+  .live-map-shortbread-role-water.live-map-shortbread-shape-line { stroke: var(--live-map-water-line-stroke, var(--live-map-water-stroke, #beddf3)); stroke-width: var(--live-map-water-line-width, 0.0035); }
   .live-map-shortbread-role-water.live-map-shortbread-kind-river { stroke-width: var(--live-map-water-river-stroke-width, var(--live-map-water-line-width, 0.006)); }
   .live-map-shortbread-role-water.live-map-shortbread-kind-canal { stroke-width: var(--live-map-water-canal-stroke-width, var(--live-map-water-line-width, 0.0045)); }
   .live-map-shortbread-role-water.live-map-shortbread-kind-stream { stroke-width: var(--live-map-water-stream-stroke-width, var(--live-map-water-line-width, 0.003)); }
 
-  .live-map-shortbread-role-land.live-map-shortbread-shape-polygon { fill: var(--live-map-land-fill, #d7e2c4); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-forest { fill: var(--live-map-land-forest-fill, var(--live-map-land-fill, #bfd7b5)); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-park { fill: var(--live-map-land-park-fill, var(--live-map-land-fill, #cbe3bc)); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-grass { fill: var(--live-map-land-grass-fill, var(--live-map-land-fill, #cfe6bf)); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-farmland { fill: var(--live-map-land-farmland-fill, var(--live-map-land-fill, #ded5ad)); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-sand { fill: var(--live-map-land-sand-fill, var(--live-map-land-fill, #ead7a3)); }
-  .live-map-shortbread-role-land.live-map-shortbread-kind-beach { fill: var(--live-map-land-beach-fill, var(--live-map-land-fill, #f0ddb0)); }
+  .live-map-shortbread-role-land.live-map-shortbread-shape-polygon { fill: var(--live-map-land-fill, #f9f4ee); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-forest { fill: var(--live-map-land-forest-fill, #66aa44); fill-opacity: var(--live-map-land-forest-fill-opacity, 0.1); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-park { fill: var(--live-map-land-park-fill, var(--live-map-land-fill, #d9d9a5)); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-grass { fill: var(--live-map-land-grass-fill, var(--live-map-land-fill, #d8e8c8)); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-farmland { fill: var(--live-map-land-farmland-fill, var(--live-map-land-fill, #f0e7d1)); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-sand { fill: var(--live-map-land-sand-fill, var(--live-map-land-fill, #fafaed)); }
+  .live-map-shortbread-role-land.live-map-shortbread-kind-beach { fill: var(--live-map-land-beach-fill, var(--live-map-land-fill, #fafaed)); }
 
-  .live-map-shortbread-role-site.live-map-shortbread-shape-polygon { fill: var(--live-map-site-polygon-fill, var(--live-map-site-fill, #efe7d3)); opacity: var(--live-map-site-polygon-opacity, 0.75); }
-  .live-map-shortbread-role-site.live-map-shortbread-shape-point { fill: var(--live-map-site-point-fill, var(--live-map-site-fill, #8f7248)); stroke: none; }
+  .live-map-shortbread-role-site.live-map-shortbread-shape-polygon { fill: var(--live-map-site-polygon-fill, var(--live-map-site-fill, #f7deed)); fill-opacity: var(--live-map-site-polygon-opacity, 0.25); }
+  .live-map-shortbread-role-site.live-map-shortbread-shape-point { fill: var(--live-map-site-point-fill, var(--live-map-site-fill, #66626a)); stroke: none; }
 
-  .live-map-shortbread-role-building.live-map-shortbread-shape-polygon { fill: var(--live-map-building-fill, #d8ccbe); stroke: var(--live-map-building-stroke, #b8a48f); stroke-width: var(--live-map-building-stroke-width, 0.0015); }
+  .live-map-shortbread-role-building.live-map-shortbread-shape-polygon { fill: var(--live-map-building-fill, #f2eae2); stroke: var(--live-map-building-stroke, #dfdbd7); stroke-width: var(--live-map-building-stroke-width, 0.0015); }
 
-  .live-map-shortbread-role-street.live-map-shortbread-shape-line { stroke: var(--live-map-street-stroke, #f5f3ef); stroke-width: var(--live-map-street-stroke-width, 0.0045); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-motorway { stroke: var(--live-map-street-motorway-stroke, var(--live-map-street-stroke, #f29b49)); stroke-width: var(--live-map-street-motorway-stroke-width, 0.012); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-trunk { stroke: var(--live-map-street-trunk-stroke, var(--live-map-street-stroke, #e8b85f)); stroke-width: var(--live-map-street-trunk-stroke-width, 0.011); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-primary { stroke: var(--live-map-street-primary-stroke, var(--live-map-street-stroke, #f2c56f)); stroke-width: var(--live-map-street-primary-stroke-width, 0.009); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-secondary { stroke: var(--live-map-street-secondary-stroke, var(--live-map-street-stroke, #e6d286)); stroke-width: var(--live-map-street-secondary-stroke-width, 0.007); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-tertiary { stroke: var(--live-map-street-tertiary-stroke, var(--live-map-street-stroke, #d8d4c8)); stroke-width: var(--live-map-street-tertiary-stroke-width, 0.006); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-rail { stroke: var(--live-map-street-rail-stroke, var(--live-map-street-stroke, #7a6f66)); stroke-width: var(--live-map-street-rail-stroke-width, 0.004); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-tram { stroke: var(--live-map-street-tram-stroke, var(--live-map-street-stroke, #8a7d73)); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-subway { stroke-width: var(--live-map-street-subway-stroke-width, 0.003); }
-  .live-map-shortbread-role-street.live-map-shortbread-shape-polygon { fill: var(--live-map-street-polygon-fill, var(--live-map-street-fill, #ece7df)); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-runway { fill: var(--live-map-street-runway-fill, var(--live-map-street-fill, #d8d2c6)); }
-  .live-map-shortbread-role-street.live-map-shortbread-kind-taxiway { fill: var(--live-map-street-taxiway-fill, var(--live-map-street-fill, #ddd7cc)); }
+  .live-map-shortbread-role-street.live-map-shortbread-shape-line { stroke: var(--live-map-street-stroke, #ffffff); stroke-width: var(--live-map-street-stroke-width, 0.0045); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-motorway { stroke: var(--live-map-street-motorway-stroke, var(--live-map-street-stroke, #ffcc88)); stroke-width: var(--live-map-street-motorway-stroke-width, 0.012); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-trunk { stroke: var(--live-map-street-trunk-stroke, var(--live-map-street-stroke, #ffeeaa)); stroke-width: var(--live-map-street-trunk-stroke-width, 0.011); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-primary { stroke: var(--live-map-street-primary-stroke, var(--live-map-street-stroke, #ffeeaa)); stroke-width: var(--live-map-street-primary-stroke-width, 0.009); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-secondary { stroke: var(--live-map-street-secondary-stroke, var(--live-map-street-stroke, #ffeeaa)); stroke-width: var(--live-map-street-secondary-stroke-width, 0.007); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-tertiary { stroke: var(--live-map-street-tertiary-stroke, var(--live-map-street-stroke, #ffffff)); stroke-width: var(--live-map-street-tertiary-stroke-width, 0.006); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-rail { stroke: var(--live-map-street-rail-stroke, var(--live-map-street-stroke, #b1bbc4)); stroke-width: var(--live-map-street-rail-stroke-width, 0.004); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-tram { stroke: var(--live-map-street-tram-stroke, var(--live-map-street-stroke, #b1bbc4)); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-subway { stroke: var(--live-map-street-subway-stroke, var(--live-map-street-stroke, #a6b8c7)); stroke-width: var(--live-map-street-subway-stroke-width, 0.003); }
+  .live-map-shortbread-role-street.live-map-shortbread-shape-polygon { fill: var(--live-map-street-polygon-fill, var(--live-map-street-fill, #ffffff)); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-runway { fill: var(--live-map-street-runway-fill, var(--live-map-street-fill, #ffffff)); }
+  .live-map-shortbread-role-street.live-map-shortbread-kind-taxiway { fill: var(--live-map-street-taxiway-fill, var(--live-map-street-fill, #ffffff)); }
 
-  .live-map-shortbread-role-bridge.live-map-shortbread-shape-polygon { fill: var(--live-map-bridge-fill, #d8d2c8); stroke: var(--live-map-bridge-stroke, #a89e91); stroke-width: var(--live-map-bridge-stroke-width, 0.0015); }
+  .live-map-shortbread-role-bridge.live-map-shortbread-shape-polygon { fill: var(--live-map-bridge-fill, #f9f4ee); stroke: var(--live-map-bridge-stroke, #cfcdca); stroke-width: var(--live-map-bridge-stroke-width, 0.0015); }
 
-  .live-map-shortbread-role-boundary.live-map-shortbread-shape-line { stroke: var(--live-map-boundary-stroke, #70839a); stroke-width: var(--live-map-boundary-stroke-width, 0.002); stroke-dasharray: var(--live-map-boundary-stroke-dasharray, 0.01 0.008); }
+  .live-map-shortbread-role-boundary.live-map-shortbread-shape-line { stroke: var(--live-map-boundary-stroke, #a6a6c8); stroke-width: var(--live-map-boundary-stroke-width, 0.002); }
+  .live-map-shortbread-role-boundary.live-map-shortbread-kind-disputed.live-map-shortbread-shape-line { stroke: var(--live-map-boundary-disputed-stroke, #bebccf); stroke-dasharray: var(--live-map-boundary-disputed-stroke-dasharray, 0.01 0.006); }
 
-  .live-map-shortbread-role-pier.live-map-shortbread-shape-polygon { fill: var(--live-map-pier-polygon-fill, var(--live-map-pier-fill, #bca994)); }
-  .live-map-shortbread-role-pier.live-map-shortbread-shape-line { stroke: var(--live-map-pier-line-stroke, var(--live-map-pier-stroke, #8c7760)); stroke-width: var(--live-map-pier-line-width, 0.0035); }
+  .live-map-shortbread-layer-addresses.live-map-shortbread-shape-point,
+  .live-map-shortbread-layer-pois.live-map-shortbread-shape-point,
+  .live-map-shortbread-layer-public-transport.live-map-shortbread-shape-point { display: none; }
 
-  .live-map-shortbread-role-ferry.live-map-shortbread-shape-line { stroke: var(--live-map-ferry-stroke, #4b87b2); stroke-width: var(--live-map-ferry-stroke-width, 0.0025); stroke-dasharray: var(--live-map-ferry-stroke-dasharray, 0.01 0.008); }
+  .live-map-shortbread-role-pier.live-map-shortbread-shape-polygon { fill: var(--live-map-pier-polygon-fill, var(--live-map-pier-fill, #f9f4ee)); }
+  .live-map-shortbread-role-pier.live-map-shortbread-shape-line { stroke: var(--live-map-pier-line-stroke, var(--live-map-pier-stroke, #f9f4ee)); stroke-width: var(--live-map-pier-line-width, 0.0035); }
 
-  .live-map-shortbread-role-aerialway.live-map-shortbread-shape-line { stroke: var(--live-map-aerialway-stroke, #7a6b59); stroke-width: var(--live-map-aerialway-stroke-width, 0.002); stroke-dasharray: var(--live-map-aerialway-stroke-dasharray, 0.006 0.004); }
+  .live-map-shortbread-role-ferry.live-map-shortbread-shape-line { stroke: var(--live-map-ferry-stroke, #8fb9d5); stroke-width: var(--live-map-ferry-stroke-width, 0.0025); stroke-dasharray: var(--live-map-ferry-stroke-dasharray, 0.01 0.008); }
 
-  .live-map-shortbread-role-other.live-map-shortbread-shape-point { fill: var(--live-map-other-point-fill, var(--live-map-other-fill, #7d6a4f)); stroke: none; }
-  .live-map-shortbread-role-other.live-map-shortbread-shape-line { stroke: var(--live-map-other-line-stroke, var(--live-map-other-stroke, #738091)); stroke-width: var(--live-map-other-line-stroke-width, 0.0025); }
-  .live-map-shortbread-role-other.live-map-shortbread-shape-polygon { fill: var(--live-map-other-polygon-fill, var(--live-map-other-fill, #dfe6ee)); }
+  .live-map-shortbread-role-aerialway.live-map-shortbread-shape-line { stroke: var(--live-map-aerialway-stroke, #66626a); stroke-width: var(--live-map-aerialway-stroke-width, 0.002); stroke-dasharray: var(--live-map-aerialway-stroke-dasharray, 0.006 0.004); }
+
+  .live-map-shortbread-role-other.live-map-shortbread-shape-point { fill: var(--live-map-other-point-fill, var(--live-map-other-fill, #66626a)); stroke: none; }
+  .live-map-shortbread-role-other.live-map-shortbread-shape-line { stroke: var(--live-map-other-line-stroke, var(--live-map-other-stroke, #b1bbc4)); stroke-width: var(--live-map-other-line-stroke-width, 0.0025); }
+  .live-map-shortbread-role-other.live-map-shortbread-shape-polygon { fill: var(--live-map-other-polygon-fill, var(--live-map-other-fill, #eae6e1)); }
 
   .live-map-shortbread-tunnel { opacity: var(--live-map-tunnel-opacity, 0.7); }
   """
@@ -743,6 +782,111 @@ defmodule LiveMap.MVT do
   @tile_css String.trim(@tile_css_content)
 
   defp tile_css, do: @tile_css
+
+  # Shortbread intentionally includes label candidates and leaves collision and
+  # zoom policy to the renderer. LiveMap cannot do browser-side collision
+  # detection, so its default is deliberately conservative. User-supplied
+  # Google style JSON is appended after these rules and can override them.
+  defp default_label_css(zoom) do
+    [
+      label_rule(
+        zoom >= 3,
+        ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-2",
+        "var(--live-map-country-label-font-size, 0.052px)",
+        600
+      ),
+      label_rule(
+        zoom >= 7,
+        ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-4",
+        "var(--live-map-state-label-font-size, 0.035px)",
+        500
+      ),
+      label_rule(
+        zoom >= 5,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-capital",
+        "var(--live-map-capital-label-font-size, 0.047px)",
+        600
+      ),
+      label_rule(
+        zoom >= 6,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-state-capital",
+        "var(--live-map-state-capital-label-font-size, 0.043px)",
+        600
+      ),
+      label_rule(
+        zoom >= 7,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-city",
+        "var(--live-map-city-label-font-size, 0.043px)",
+        600
+      ),
+      label_rule(
+        zoom >= 9,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-town",
+        "var(--live-map-town-label-font-size, 0.04px)",
+        500
+      ),
+      label_rule(
+        zoom >= 11,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-village",
+        "var(--live-map-village-label-font-size, 0.038px)",
+        500
+      ),
+      label_rule(
+        zoom >= 13,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-hamlet",
+        "var(--live-map-hamlet-label-font-size, 0.036px)",
+        500
+      ),
+      label_rule(
+        zoom >= 11,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-suburb",
+        "var(--live-map-suburb-label-font-size, 0.038px)",
+        500
+      ),
+      label_rule(
+        zoom >= 13,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-quarter",
+        "var(--live-map-quarter-label-font-size, 0.036px)",
+        500
+      ),
+      label_rule(
+        zoom >= 14,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-neighbourhood",
+        "var(--live-map-neighbourhood-label-font-size, 0.034px)",
+        500
+      ),
+      label_rule(
+        zoom >= 11,
+        ".live-map-shortbread-layer-place-labels.live-map-shortbread-kind-island, .live-map-shortbread-layer-place-labels.live-map-shortbread-kind-locality",
+        "var(--live-map-locality-label-font-size, 0.036px)",
+        500
+      ),
+      label_rule(
+        zoom >= 12,
+        ".live-map-shortbread-layer-street-labels-points",
+        "var(--live-map-street-label-font-size, 0.034px)",
+        500
+      )
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  defp label_rule(true, selector, font_size, font_weight) do
+    "#{selector}.live-map-shortbread-shape-text { display: inline; font-size: #{font_size}; font-weight: #{font_weight}; }"
+  end
+
+  defp label_rule(false, _selector, _font_size, _font_weight), do: nil
+
+  defp admin_level_class(nil), do: nil
+
+  defp admin_level_class(admin_level) when is_integer(admin_level),
+    do: "live-map-shortbread-admin-level-#{admin_level}"
+
+  defp admin_level_class(admin_level) when is_binary(admin_level),
+    do: "live-map-shortbread-admin-level-#{css_token(admin_level)}"
+
+  defp admin_level_class(_admin_level), do: nil
 
   defp point_path({x, y}) do
     radius = 0.01

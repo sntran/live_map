@@ -11,9 +11,32 @@ defmodule LiveMap.StyleTest do
     styles = [
       %{"featureType" => "all", "elementType" => "all", "stylers" => [%{"visibility" => "off"}]}
     ]
+
     css = Style.to_css(styles)
-    assert css =~ ".live-map-shortbread-feature:not(.live-map-shortbread-shape-text):not(.live-map-shortbread-shape-line) { display: none !important; }"
-    assert css =~ ".live-map-shortbread-feature.live-map-shortbread-shape-line { display: none !important; }"
+
+    assert css =~
+             ".live-map-shortbread-feature:not(.live-map-shortbread-shape-text):not(.live-map-shortbread-shape-line) { display: none !important; }"
+
+    assert css =~
+             ".live-map-shortbread-feature.live-map-shortbread-shape-line { display: none !important; }"
+
+    assert css =~
+             ".live-map-shortbread-feature.live-map-shortbread-shape-text { display: none !important; }"
+  end
+
+  test "to_css lets elementType all re-enable default-hidden labels" do
+    styles = [
+      %{
+        "featureType" => "poi",
+        "elementType" => "all",
+        "stylers" => [%{"visibility" => "simplified"}]
+      }
+    ]
+
+    css = Style.to_css(styles)
+
+    assert css =~
+             ".live-map-shortbread-layer-pois.live-map-shortbread-shape-text, .live-map-shortbread-layer-public-transport.live-map-shortbread-shape-text { display: block !important; }"
   end
 
   test "to_css processes color and weight for geometry.stroke" do
@@ -24,6 +47,7 @@ defmodule LiveMap.StyleTest do
         "stylers" => [%{"color" => "#ff0000"}, %{"weight" => 200}]
       }
     ]
+
     css = Style.to_css(styles)
     assert css =~ ".live-map-shortbread-role-street:not(.live-map-shortbread-shape-text)"
     assert css =~ "stroke: #ff0000 !important;"
@@ -38,8 +62,12 @@ defmodule LiveMap.StyleTest do
         "stylers" => [%{"color" => "#0000ff"}]
       }
     ]
+
     css = Style.to_css(styles)
-    assert css =~ ".live-map-shortbread-role-water:not(.live-map-shortbread-shape-text):not(.live-map-shortbread-shape-line)"
+
+    assert css =~
+             ".live-map-shortbread-role-water:not(.live-map-shortbread-shape-text):not(.live-map-shortbread-shape-line)"
+
     assert css =~ "fill: #0000ff !important;"
   end
 
@@ -51,8 +79,12 @@ defmodule LiveMap.StyleTest do
         "stylers" => [%{"color" => "#00ff00"}]
       }
     ]
+
     css = Style.to_css(styles)
-    assert css =~ ".live-map-shortbread-role-land.live-map-shortbread-kind-park.live-map-shortbread-shape-text"
+
+    assert css =~
+             ".live-map-shortbread-role-land.live-map-shortbread-kind-park.live-map-shortbread-shape-text"
+
     assert css =~ "fill: #00ff00 !important;"
   end
 
@@ -70,9 +102,12 @@ defmodule LiveMap.StyleTest do
       %{"featureType" => "landscape.natural.landcover", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "landscape.natural.terrain", "stylers" => [%{"visibility" => "on"}]}
     ]
+
     css = Style.to_css(styles)
     assert css =~ "live-map-shortbread-role-boundary"
-    assert css =~ "live-map-shortbread-kind-country"
+    assert css =~ "live-map-shortbread-admin-level-2"
+    assert css =~ "live-map-shortbread-admin-level-4"
+    assert css =~ "live-map-shortbread-layer-place-labels"
     assert css =~ "live-map-shortbread-role-land"
   end
 
@@ -88,8 +123,10 @@ defmodule LiveMap.StyleTest do
       %{"featureType" => "poi.school", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "poi.sports_complex", "stylers" => [%{"visibility" => "on"}]}
     ]
+
     css = Style.to_css(styles)
-    assert css =~ "live-map-shortbread-role-poi"
+    assert css =~ "live-map-shortbread-layer-pois"
+    assert css =~ "live-map-shortbread-layer-public-transport"
     assert css =~ "live-map-shortbread-kind-school"
   end
 
@@ -98,39 +135,62 @@ defmodule LiveMap.StyleTest do
       %{"featureType" => "road", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "road.arterial", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "road.highway", "stylers" => [%{"visibility" => "on"}]},
-      %{"featureType" => "road.highway.controlled_access", "stylers" => [%{"visibility" => "on"}]},
+      %{
+        "featureType" => "road.highway.controlled_access",
+        "stylers" => [%{"visibility" => "on"}]
+      },
       %{"featureType" => "road.local", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "transit", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "transit.line", "stylers" => [%{"visibility" => "on"}]},
       %{"featureType" => "transit.station", "stylers" => [%{"visibility" => "on"}]}
     ]
+
     css = Style.to_css(styles)
     assert css =~ "live-map-shortbread-role-street"
-    assert css =~ "live-map-shortbread-kind-station"
+    assert css =~ "live-map-shortbread-layer-public-transport"
   end
 
   test "to_css handles string weight" do
     styles = [
-      %{"featureType" => "road", "elementType" => "geometry.stroke", "stylers" => [%{"weight" => "150"}]}
+      %{
+        "featureType" => "road",
+        "elementType" => "geometry.stroke",
+        "stylers" => [%{"weight" => "150"}]
+      }
     ]
+
     assert Style.to_css(styles) =~ "stroke-width: 1.5px !important;"
 
     styles2 = [
-      %{"featureType" => "road", "elementType" => "geometry.stroke", "stylers" => [%{"weight" => "invalid"}]}
+      %{
+        "featureType" => "road",
+        "elementType" => "geometry.stroke",
+        "stylers" => [%{"weight" => "invalid"}]
+      }
     ]
+
     css2 = Style.to_css(styles2)
     refute css2 =~ "stroke-width"
   end
 
   test "to_css handles other elementTypes with color" do
     styles = [
-      %{"featureType" => "all", "elementType" => "labels.text.stroke", "stylers" => [%{"color" => "#333"}]},
+      %{
+        "featureType" => "all",
+        "elementType" => "labels.text.stroke",
+        "stylers" => [%{"color" => "#333"}]
+      },
       %{"featureType" => "all", "elementType" => "labels", "stylers" => [%{"color" => "#111"}]},
       %{"featureType" => "all", "elementType" => "all", "stylers" => [%{"color" => "#000"}]}
     ]
+
     css = Style.to_css(styles)
     assert css =~ "stroke: #333 !important;"
     assert css =~ "fill: #111 !important;"
     assert css =~ "fill: #000 !important;"
+  end
+
+  test "to_css ignores unsupported stylers" do
+    assert Style.to_css([%{"stylers" => [%{"saturation" => -100}]}]) == ""
   end
 end

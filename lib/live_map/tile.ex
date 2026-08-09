@@ -491,6 +491,7 @@ defmodule LiveMap.Tile do
       url: source_url,
       headers: source.headers,
       def_id: def_id,
+      display_zoom: tile.z,
       source_tile: source_tile,
       display_tile: display_tile,
       display_tiles: [display_tile],
@@ -521,7 +522,11 @@ defmodule LiveMap.Tile do
     result =
       case fetch_vector_body(request.url, request.headers) do
         {:ok, body} ->
-          case MVT.decode(body, id_prefix: request.def_id, custom_css: request.custom_css) do
+          case MVT.decode(body,
+                 id_prefix: request.def_id,
+                 custom_css: request.custom_css,
+                 zoom: request.display_zoom
+               ) do
             {:ok, svg} ->
               {:ok, svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()}
 
