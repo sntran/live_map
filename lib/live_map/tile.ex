@@ -27,6 +27,8 @@ defmodule LiveMap.Tile do
           required(:defs) => list(),
           optional(:definitions) => map(),
           optional(:definition_order) => list(String.t()),
+          optional(:cached_tiles) => %{optional(String.t()) => map()},
+          optional(:cache_order) => list(String.t()),
           required(:tiles) => list(map())
         }
 
@@ -71,6 +73,7 @@ defmodule LiveMap.Tile do
     headers: []
   }
   @default_mvt_max_zoom 14
+  @default_vector_tile_cache_size 64
   @default_user_agent "LiveMap/#{Application.spec(:live_map, :vsn) || "dev"}"
   @req_module :"Elixir.Req"
 
@@ -327,28 +330,36 @@ defmodule LiveMap.Tile do
 
         definitions = layer_definitions(existing_layer)
         definition_order = layer_definition_order(existing_layer, definitions)
-        definition_ids = definitions |> Map.keys() |> MapSet.new()
+        cached_tiles = layer_cached_tiles(existing_layer, definitions)
+        cache_order = layer_cache_order(existing_layer, cached_tiles)
 
-        existing_tiles_map =
-          existing_layer.tiles
-          |> Enum.filter(fn tile ->
-            tile.state == "ready" and is_binary(tile[:display_tile]) and
-              MapSet.member?(definition_ids, tile.def_id)
-          end)
-          |> Map.new(fn tile -> {tile.display_tile, tile} end)
-
-        prepared_tiles =
-          Enum.map(tiles, fn tile ->
+        {prepared_tiles, reused_cache_keys} =
+          Enum.map_reduce(tiles, [], fn tile, reused_keys ->
             display_tile = format_display_tile(tile)
 
-            Map.get(existing_tiles_map, display_tile) || prepare_loading_tile(tile, source)
+            case Map.get(cached_tiles, display_tile) do
+              nil ->
+                {prepared_tile, fallback_key} =
+                  prepare_missing_tile(tile, source, cached_tiles, definitions)
+
+                keys = if fallback_key, do: [fallback_key | reused_keys], else: reused_keys
+                {prepared_tile, keys}
+
+              cached_tile ->
+                {cached_tile, [display_tile | reused_keys]}
+            end
           end)
+
+        cache_order = Enum.reduce(reused_cache_keys, cache_order, &touch_cache_key(&2, &1))
+
+        {cached_tiles, cache_order} =
+          cache_ready_tiles(cached_tiles, cache_order, prepared_tiles, definitions)
 
         %{
           source: source,
           tiles: prepared_tiles
         }
-        |> put_visible_definitions(definitions, definition_order)
+        |> put_vector_cache(definitions, definition_order, cached_tiles, cache_order)
     end
   end
 
@@ -418,9 +429,15 @@ defmodule LiveMap.Tile do
     {definitions, definition_order} =
       put_definition(definitions, definition_order, delta[:definition])
 
+    cached_tiles = layer_cached_tiles(layer, definitions)
+    cache_order = layer_cache_order(layer, cached_tiles)
+
+    {cached_tiles, cache_order} =
+      cache_ready_tiles(cached_tiles, cache_order, delta.tiles, definitions)
+
     layer
     |> Map.put(:tiles, tiles)
-    |> put_visible_definitions(definitions, definition_order)
+    |> put_vector_cache(definitions, definition_order, cached_tiles, cache_order)
   end
 
   @doc false
@@ -492,7 +509,7 @@ defmodule LiveMap.Tile do
     source_key = {source_zoom, source_tile.x, source_tile.y, Enum.sort(source.headers)}
 
     def_id =
-      "live-map-vector-source-#{source_zoom}-#{source_tile.x}-#{source_tile.y}-#{short_hash(source_url)}"
+      "live-map-vector-source-#{source_zoom}-#{source_tile.x}-#{source_tile.y}-display-#{tile.z}-#{short_hash(source_url)}"
 
     display_tile = %{
       display_tile: format_display_tile(tile),
@@ -620,10 +637,19 @@ defmodule LiveMap.Tile do
     }
   end
 
-  defp prepare_loading_tile(tile, source) do
+  defp prepare_missing_tile(tile, source, cached_tiles, definitions) do
     request = vector_request(tile, source, "")
     display_tile = request.display_tile
 
+    if Map.has_key?(definitions, request.def_id) do
+      {prepare_vector_tile(display_tile, request), nil}
+    else
+      prepare_loading_tile(display_tile)
+      |> maybe_put_parent_placeholder(tile, cached_tiles, definitions)
+    end
+  end
+
+  defp prepare_loading_tile(display_tile) do
     %{
       type: :svg_use,
       state: "loading",
@@ -637,6 +663,27 @@ defmodule LiveMap.Tile do
       def_id: "loading-#{display_tile.display_tile}",
       source_tile: format_source_tile(display_tile.source_tile)
     }
+  end
+
+  defp maybe_put_parent_placeholder(
+         loading_tile,
+         tile,
+         cached_tiles,
+         definitions
+       ) do
+    case find_cached_ancestor(tile, cached_tiles, definitions) do
+      {ancestor_key, ancestor_tile, ancestor_coords} ->
+        {%{
+           loading_tile
+           | def_id: ancestor_tile.def_id,
+             view_box: fallback_view_box(tile, ancestor_coords, ancestor_tile)
+         }
+         |> Map.put(:placeholder, true)
+         |> Map.put(:fallback_tile, ancestor_key), ancestor_key}
+
+      nil ->
+        {loading_tile, nil}
+    end
   end
 
   defp prepare_vector_delta(request, {:ok, svg_binary}) do
@@ -831,6 +878,89 @@ defmodule LiveMap.Tile do
     end
   end
 
+  defp vector_tile_cache_size do
+    case Application.get_env(
+           :live_map,
+           :vector_tile_cache_size,
+           @default_vector_tile_cache_size
+         ) do
+      cache_size when is_integer(cache_size) and cache_size >= 0 -> cache_size
+      _invalid -> @default_vector_tile_cache_size
+    end
+  end
+
+  defp find_cached_ancestor(%{z: zoom}, _cached_tiles, _definitions) when zoom <= 0,
+    do: nil
+
+  defp find_cached_ancestor(tile, cached_tiles, definitions) do
+    find_cached_ancestor(tile, tile.z - 1, cached_tiles, definitions)
+  end
+
+  defp find_cached_ancestor(_tile, ancestor_zoom, _cached_tiles, _definitions)
+       when ancestor_zoom < 0,
+       do: nil
+
+  defp find_cached_ancestor(tile, ancestor_zoom, cached_tiles, definitions) do
+    scale = 1 <<< (tile.z - ancestor_zoom)
+    ancestor_x = floor_div(tile.x, scale)
+    ancestor_y = floor_div(tile.y, scale)
+    ancestor_key = format_display_tile(%{z: ancestor_zoom, x: ancestor_x, y: ancestor_y})
+
+    case Map.get(cached_tiles, ancestor_key) do
+      %{state: "ready", def_id: def_id} = ancestor_tile
+      when is_binary(def_id) and is_map_key(definitions, def_id) ->
+        {ancestor_key, ancestor_tile, %{z: ancestor_zoom, x: ancestor_x, y: ancestor_y}}
+
+      _other ->
+        find_cached_ancestor(tile, ancestor_zoom - 1, cached_tiles, definitions)
+    end
+  end
+
+  defp fallback_view_box(tile, ancestor, ancestor_tile) do
+    scale = 1 <<< (tile.z - ancestor.z)
+    offset_x = tile.x - ancestor.x * scale
+    offset_y = tile.y - ancestor.y * scale
+    {base_x, base_y, base_width, base_height} = parse_view_box(ancestor_tile.view_box)
+
+    width = base_width / scale
+    height = base_height / scale
+
+    [
+      format_number(base_x + offset_x * width),
+      " ",
+      format_number(base_y + offset_y * height),
+      " ",
+      format_number(width),
+      " ",
+      format_number(height)
+    ]
+  end
+
+  defp parse_view_box(view_box) do
+    values =
+      view_box
+      |> IO.iodata_to_binary()
+      |> String.split()
+      |> Enum.map(fn value ->
+        case Float.parse(value) do
+          {number, ""} -> number
+          _other -> nil
+        end
+      end)
+
+    case values do
+      [x, y, width, height]
+      when is_number(x) and is_number(y) and is_number(width) and is_number(height) ->
+        {x, y, width, height}
+
+      _other ->
+        {0.0, 0.0, 1.0, 1.0}
+    end
+  end
+
+  defp floor_div(dividend, divisor) when dividend >= 0, do: div(dividend, divisor)
+  defp floor_div(dividend, divisor), do: -div(-dividend + divisor - 1, divisor)
+
   defp child_view_box(fetch_x, fetch_y, overzoom_scale) do
     offset_x = rem(fetch_x, overzoom_scale)
     offset_y = rem(fetch_y, overzoom_scale)
@@ -893,14 +1023,15 @@ defmodule LiveMap.Tile do
   defp layer_definitions(%{definitions: definitions}) when map_size(definitions) > 0,
     do: definitions
 
-  defp layer_definitions(layer), do: normalize_definitions(layer.defs)
+  defp layer_definitions(layer), do: normalize_definitions(Map.get(layer, :defs, []))
 
   defp layer_definition_order(%{definition_order: order}, definitions) when is_list(order) do
     Enum.filter(order, &Map.has_key?(definitions, &1))
   end
 
   defp layer_definition_order(layer, definitions) do
-    layer.defs
+    layer
+    |> Map.get(:defs, [])
     |> Enum.map(&definition_id/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.filter(&Map.has_key?(definitions, &1))
@@ -913,11 +1044,128 @@ defmodule LiveMap.Tile do
     {Map.put(definitions, id, definition), order}
   end
 
+  defp layer_cached_tiles(layer, definitions) do
+    cached_tiles = Map.get(layer, :cached_tiles, %{})
+
+    layer
+    |> Map.get(:tiles, [])
+    |> Enum.reduce(cached_tiles, fn
+      %{state: "ready", display_tile: display_tile, def_id: def_id} = tile, cache
+      when is_binary(display_tile) and is_binary(def_id) ->
+        if Map.has_key?(definitions, def_id) do
+          Map.put(cache, display_tile, tile)
+        else
+          cache
+        end
+
+      _tile, cache ->
+        cache
+    end)
+    |> Map.filter(fn {_key, tile} ->
+      tile.state == "ready" and is_binary(tile[:def_id]) and
+        Map.has_key?(definitions, tile.def_id)
+    end)
+  end
+
+  defp layer_cache_order(layer, cached_tiles) do
+    existing_order =
+      layer
+      |> Map.get(:cache_order, [])
+      |> Enum.filter(&Map.has_key?(cached_tiles, &1))
+
+    ordered = MapSet.new(existing_order)
+
+    missing_keys =
+      cached_tiles
+      |> Map.keys()
+      |> Enum.reject(&MapSet.member?(ordered, &1))
+      |> Enum.sort()
+
+    visible_keys =
+      layer
+      |> Map.get(:tiles, [])
+      |> Enum.flat_map(fn
+        %{state: "ready", display_tile: display_tile} -> [display_tile]
+        _tile -> []
+      end)
+
+    Enum.reduce(missing_keys ++ visible_keys, existing_order, &touch_cache_key(&2, &1))
+  end
+
+  defp cache_ready_tiles(cached_tiles, cache_order, tiles, definitions) do
+    Enum.reduce(tiles, {cached_tiles, cache_order}, fn
+      %{state: "ready", display_tile: display_tile, def_id: def_id} = tile, {cache, order}
+      when is_binary(display_tile) and is_binary(def_id) ->
+        if Map.has_key?(definitions, def_id) do
+          {Map.put(cache, display_tile, tile), touch_cache_key(order, display_tile)}
+        else
+          {cache, order}
+        end
+
+      _tile, cache_and_order ->
+        cache_and_order
+    end)
+  end
+
+  defp touch_cache_key(order, key) do
+    Enum.reject(order, &(&1 == key)) ++ [key]
+  end
+
+  defp put_vector_cache(layer, definitions, definition_order, cached_tiles, cache_order) do
+    protected_keys =
+      layer.tiles
+      |> Enum.flat_map(fn
+        %{state: "ready", display_tile: display_tile} -> [display_tile]
+        %{fallback_tile: fallback_tile} -> [fallback_tile]
+        _tile -> []
+      end)
+      |> MapSet.new()
+
+    {cached_tiles, cache_order} =
+      trim_tile_cache(cached_tiles, cache_order, protected_keys, vector_tile_cache_size())
+
+    retained_definition_ids =
+      cached_tiles
+      |> Map.values()
+      |> Kernel.++(layer.tiles)
+      |> Enum.flat_map(fn
+        %{def_id: def_id} when is_binary(def_id) -> [def_id]
+        _tile -> []
+      end)
+      |> MapSet.new()
+
+    definitions =
+      Map.filter(definitions, fn {id, _definition} -> id in retained_definition_ids end)
+
+    definition_order = Enum.filter(definition_order, &Map.has_key?(definitions, &1))
+
+    layer
+    |> Map.put(:cached_tiles, cached_tiles)
+    |> Map.put(:cache_order, cache_order)
+    |> put_visible_definitions(definitions, definition_order)
+  end
+
+  defp trim_tile_cache(cached_tiles, cache_order, protected_keys, cache_size) do
+    overflow = max(map_size(cached_tiles) - cache_size, 0)
+
+    evictable_keys = Enum.reject(cache_order, &MapSet.member?(protected_keys, &1))
+    evicted_keys = Enum.take(evictable_keys, overflow)
+    evicted_set = MapSet.new(evicted_keys)
+
+    {
+      Map.drop(cached_tiles, evicted_keys),
+      Enum.reject(cache_order, &MapSet.member?(evicted_set, &1))
+    }
+  end
+
   defp put_visible_definitions(layer, definitions, order) do
     active_ids =
       layer.tiles
-      |> Enum.filter(&(&1.state == "ready" and is_binary(&1[:def_id])))
-      |> Enum.map(& &1.def_id)
+      |> Enum.flat_map(fn
+        %{type: :svg_use, def_id: def_id} when is_binary(def_id) -> [def_id]
+        _tile -> []
+      end)
+      |> Enum.filter(&Map.has_key?(definitions, &1))
       |> Enum.uniq()
 
     active_set = MapSet.new(active_ids)
@@ -936,8 +1184,8 @@ defmodule LiveMap.Tile do
 
     layer
     |> Map.put(:defs, Enum.map(visible, & &1.content))
-    |> Map.put(:definitions, Map.new(visible, &{&1.id, &1}))
-    |> Map.put(:definition_order, Enum.map(visible, & &1.id))
+    |> Map.put(:definitions, definitions)
+    |> Map.put(:definition_order, order)
   end
 
   defp definition_id(definition) do

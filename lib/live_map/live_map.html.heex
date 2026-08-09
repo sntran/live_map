@@ -56,8 +56,10 @@
       data-live-map-tile-state={tile.state}
       data-live-map-display-tile={tile.display_tile}
       data-live-map-source-tile={tile.source_tile}
+      data-live-map-tile-placeholder={tile[:placeholder] && "parent"}
+      data-live-map-fallback-tile={tile[:fallback_tile]}
     >
-      <%= if tile.state == "loading" do %>
+      <%= if tile.state == "loading" and tile[:placeholder] != true do %>
         <circle cx="128" cy="128" r="16" stroke="#9ca3af" stroke-width="4" fill="none" stroke-dasharray="25 75" stroke-linecap="round">
           <animateTransform attributeName="transform" type="rotate" from="0 128 128" to="360 128 128" dur="1s" repeatCount="indefinite" />
         </circle>

@@ -230,9 +230,59 @@ defmodule LiveMap.TileTest do
 
       assert result.defs == []
     end
+
+    test "retains decoded tiles after they leave the viewport" do
+      existing_layer = ready_vector_layer(1, 0, 0)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+
+      panned_layer = Tile.prepare_layer([%{z: 1, x: 1, y: 0}], source, existing_layer)
+      returned_layer = Tile.prepare_layer([%{z: 1, x: 0, y: 0}], source, panned_layer)
+
+      assert panned_layer.cached_tiles["1/0/0"].state == "ready"
+
+      assert [%{state: "ready", display_tile: "1/0/0", def_id: "test"}] =
+               returned_layer.tiles
+
+      assert returned_layer.defs == existing_layer.defs
+    end
+
+    test "uses the nearest cached parent while a child tile loads" do
+      existing_layer = ready_vector_layer(1, 0, 0)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+
+      result = Tile.prepare_layer([%{z: 2, x: 1, y: 1}], source, existing_layer)
+
+      assert [tile] = result.tiles
+      assert tile.state == "loading"
+      assert tile.placeholder
+      assert tile.fallback_tile == "1/0/0"
+      assert tile.def_id == "test"
+      assert IO.iodata_to_binary(tile.view_box) == "0.5 0.5 0.5 0.5"
+      assert result.defs == existing_layer.defs
+    end
+
+    test "composes a cached overzoom crop into the child placeholder" do
+      existing_layer = ready_vector_layer(15, 1, 0, "0.5 0 0.5 0.5")
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt", max_zoom: 14}
+
+      result = Tile.prepare_layer([%{z: 16, x: 3, y: 1}], source, existing_layer)
+
+      assert [tile] = result.tiles
+      assert tile.fallback_tile == "15/1/0"
+      assert IO.iodata_to_binary(tile.view_box) == "0.75 0.25 0.25 0.25"
+    end
+
+    test "finds cached parents across the wrapped negative x range" do
+      existing_layer = ready_vector_layer(1, -1, 0)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+
+      result = Tile.prepare_layer([%{z: 2, x: -1, y: 0}], source, existing_layer)
+
+      assert [%{placeholder: true, fallback_tile: "1/-1/0"}] = result.tiles
+    end
   end
 
-  defp ready_vector_layer(z, x, y) do
+  defp ready_vector_layer(z, x, y, view_box \\ "0 0 1 1") do
     %{
       defs: [Phoenix.HTML.raw("<svg id=\"test\"></svg>")],
       tiles: [
@@ -246,7 +296,7 @@ defmodule LiveMap.TileTest do
           width: 256,
           height: 256,
           def_id: "test",
-          view_box: "0 0 1 1",
+          view_box: view_box,
           source_tile: "#{z}/#{x}/#{y}"
         }
       ]

@@ -8,6 +8,7 @@ defmodule LiveMap.VectorTileTest do
   setup do
     original_user_agent = Application.get_env(:live_map, :tile_user_agent)
     original_concurrency = Application.get_env(:live_map, :vector_tile_concurrency)
+    original_cache_size = Application.get_env(:live_map, :vector_tile_cache_size)
 
     server = LiveMap.TestTileServer.start_link()
     Application.put_env(:live_map, :vector_tile_concurrency, 2)
@@ -22,6 +23,10 @@ defmodule LiveMap.VectorTileTest do
       if is_nil(original_concurrency),
         do: Application.delete_env(:live_map, :vector_tile_concurrency),
         else: Application.put_env(:live_map, :vector_tile_concurrency, original_concurrency)
+
+      if is_nil(original_cache_size),
+        do: Application.delete_env(:live_map, :vector_tile_cache_size),
+        else: Application.put_env(:live_map, :vector_tile_cache_size, original_cache_size)
     end)
 
     %{server: server}
@@ -151,6 +156,94 @@ defmodule LiveMap.VectorTileTest do
 
     assert LiveMap.TestTileServer.request_count(server, "/3/2/2.mvt") === 1
     assert LiveMap.TestTileServer.request_count(server, "/2/2/2.mvt") === 1
+  end
+
+  test "does not fetch or decode a retained tile again after panning away", %{server: server} do
+    LiveMap.TestTileServer.put_responses(server, "/1/0/0.mvt", [
+      {200, [{"cache-control", "max-age=0"}], shortbread_tile()}
+    ])
+
+    LiveMap.TestTileServer.put_responses(server, "/1/1/0.mvt", [
+      {200, [{"cache-control", "max-age=0"}], shortbread_tile()}
+    ])
+
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
+    first_view = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 1}], source)
+    panned_view = Tile.fetch_vector_layer([%{x: 1, y: 0, z: 1}], source, "", first_view)
+    returned_view = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 1}], source, "", panned_view)
+
+    assert [%{display_tile: "1/0/0", state: "ready"}] = returned_view.tiles
+    assert LiveMap.TestTileServer.request_count(server, "/1/0/0.mvt") === 1
+    assert LiveMap.TestTileServer.request_count(server, "/1/1/0.mvt") === 1
+  end
+
+  test "reuses a decoded definition when panning across a wrapped world", %{server: server} do
+    LiveMap.TestTileServer.put_responses(server, "/1/0/0.mvt", [
+      {200, [{"cache-control", "max-age=0"}], shortbread_tile()}
+    ])
+
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
+    first_world = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 1}], source)
+    wrapped_world = Tile.fetch_vector_layer([%{x: 2, y: 0, z: 1}], source, "", first_world)
+
+    assert [tile] = wrapped_world.tiles
+    assert tile.display_tile == "1/2/0"
+    assert tile.source_tile == "1/0/0"
+    assert tile.state == "ready"
+    assert LiveMap.TestTileServer.request_count(server, "/1/0/0.mvt") === 1
+  end
+
+  test "keeps display-zoom-specific definitions when source tiles are overzoomed", %{
+    server: server
+  } do
+    LiveMap.TestTileServer.put_responses(server, "/14/0/0.mvt", [
+      {200, [{"cache-control", "max-age=0"}], shortbread_tile()},
+      {200, [{"cache-control", "max-age=0"}], shortbread_tile()}
+    ])
+
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt", max_zoom: 14}
+    zoom_fourteen = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 14}], source)
+    zoom_fifteen = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 15}], source, "", zoom_fourteen)
+
+    parent_def_id = zoom_fourteen.tiles |> hd() |> Map.fetch!(:def_id)
+    child_def_id = zoom_fifteen.tiles |> hd() |> Map.fetch!(:def_id)
+
+    refute parent_def_id == child_def_id
+    assert map_size(zoom_fifteen.definitions) == 2
+    assert Map.has_key?(zoom_fifteen.cached_tiles, "14/0/0")
+    assert Map.has_key?(zoom_fifteen.cached_tiles, "15/0/0")
+    assert LiveMap.TestTileServer.request_count(server, "/14/0/0.mvt") === 2
+  end
+
+  test "evicts the least recently used offscreen tile at the configured bound", %{
+    server: server
+  } do
+    Application.put_env(:live_map, :vector_tile_cache_size, 2)
+
+    for x <- 0..2 do
+      LiveMap.TestTileServer.put_responses(server, "/2/#{x}/0.mvt", [
+        {200, [{"cache-control", "max-age=0"}], shortbread_tile()}
+      ])
+    end
+
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
+
+    layer =
+      Enum.reduce(0..2, nil, fn x, existing_layer ->
+        Tile.fetch_vector_layer(
+          [%{x: x, y: 0, z: 2}],
+          source,
+          "",
+          existing_layer || %{defs: [], tiles: []}
+        )
+      end)
+
+    assert map_size(layer.cached_tiles) == 2
+    refute Map.has_key?(layer.cached_tiles, "2/0/0")
+    assert layer.cache_order == ["2/1/0", "2/2/0"]
+
+    returned_layer = Tile.prepare_layer([%{x: 0, y: 0, z: 2}], source, layer)
+    assert [%{state: "loading", display_tile: "2/0/0"}] = returned_layer.tiles
   end
 
   test "streams each vector source tile as soon as it is decoded", %{server: server} do

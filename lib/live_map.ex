@@ -42,6 +42,21 @@ defmodule LiveMap do
     end
   end
 
+  def update(
+        %{tile_layer_delta: delta, async_ref: ref, tile_cache_context: cache_context},
+        socket
+      ) do
+    same_request? = socket.assigns[:async_ref] == ref
+    same_cache? = socket.assigns[:tile_cache_context] == cache_context
+
+    if same_request? or same_cache? do
+      tile_layer = Tile.merge_vector_delta(socket.assigns.tile_layer, delta)
+      {:ok, assign(socket, :tile_layer, tile_layer)}
+    else
+      {:ok, socket}
+    end
+  end
+
   def update(%{tile_layer_delta: delta, async_ref: ref}, socket) do
     if socket.assigns[:async_ref] == ref do
       tile_layer = Tile.merge_vector_delta(socket.assigns.tile_layer, delta)
@@ -218,6 +233,7 @@ defmodule LiveMap do
     tiles = Tile.map(latitude, longitude, zoom, width, height)
     css = LiveMap.Style.to_css(styles)
     {rendering_type, tile_source} = tile_source(assigns)
+    tile_cache_context = {tile_source, css}
 
     needs_new_layer? =
       assigns[:tile_layer] == nil or
@@ -231,7 +247,7 @@ defmodule LiveMap do
 
         can_reuse_layer? =
           existing_layer != nil and assigns[:rendered_tile_source] == tile_source and
-            assigns[:computed_css] == css and assigns[:rendered_zoom] == zoom
+            assigns[:computed_css] == css
 
         layer_to_diff = if can_reuse_layer?, do: existing_layer, else: %{defs: [], tiles: []}
 
@@ -253,6 +269,7 @@ defmodule LiveMap do
                     Phoenix.LiveView.send_update(pid, LiveMap,
                       id: map_id,
                       async_ref: new_ref,
+                      tile_cache_context: tile_cache_context,
                       tile_layer_delta: delta
                     )
                   end)
@@ -271,7 +288,14 @@ defmodule LiveMap do
             layer
           end
 
-        {Map.take(layer_result, [:defs, :definitions, :definition_order, :tiles]), new_ref}
+        {Map.take(layer_result, [
+           :defs,
+           :definitions,
+           :definition_order,
+           :cached_tiles,
+           :cache_order,
+           :tiles
+         ]), new_ref}
       else
         {assigns[:tile_layer], assigns[:async_ref]}
       end
@@ -296,6 +320,7 @@ defmodule LiveMap do
       |> Map.put(:computed_css, css)
       |> Map.put(:rendered_tile_source, tile_source)
       |> Map.put(:rendered_zoom, zoom)
+      |> Map.put(:tile_cache_context, tile_cache_context)
       |> Map.put(:tile_layer, tile_layer)
       |> Map.put(:async_ref, ref)
       |> Map.put(

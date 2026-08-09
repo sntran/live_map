@@ -240,6 +240,17 @@ number of online schedulers, and can be tuned for the tile service and host:
 config :live_map, :vector_tile_concurrency, 4
 ```
 
+Decoded vector tiles are retained in a per-map LRU cache, so panning back to a
+recent area does not fetch or decode those tiles again. While zooming in, the
+nearest cached parent tile is cropped and scaled as a placeholder until the
+requested child tile finishes loading. The cache defaults to 64 display tiles;
+set it to `0` to disable retention or tune it for the memory available to each
+LiveView process:
+
+```elixir
+config :live_map, :vector_tile_cache_size, 96
+```
+
 ## CLI
 
 The escript still renders raster output by default:

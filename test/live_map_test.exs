@@ -861,6 +861,7 @@ defmodule LiveMapTest do
              LiveMap.update(%{tile_layer_delta: delta, async_ref: :current}, socket)
 
     assert [%{state: "ready", display_tile: "2/1/1"}] = updated.assigns.tile_layer.tiles
+    assert updated.assigns.tile_layer.cached_tiles["2/1/1"].state == "ready"
 
     assert [definition] = updated.assigns.tile_layer.defs
     assert definition |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary() =~ "vector-2-1-1"
@@ -869,6 +870,108 @@ defmodule LiveMapTest do
              LiveMap.update(%{tile_layer_delta: delta, async_ref: :stale}, socket)
 
     assert unchanged == socket
+  end
+
+  test "update retains late vector tiles from the same source and style after panning" do
+    loading_tile = %{
+      type: :svg_use,
+      state: "loading",
+      display_tile: "2/2/1",
+      z: 2,
+      x: 512,
+      y: 256,
+      width: 256,
+      height: 256,
+      view_box: "0 0 256 256",
+      def_id: "loading-2/2/1",
+      source_tile: "2/2/1"
+    }
+
+    late_tile = %{
+      loading_tile
+      | state: "ready",
+        display_tile: "2/1/1",
+        x: 256,
+        view_box: "0 0 1 1",
+        def_id: "vector-2-1-1"
+    }
+
+    delta = %{
+      definition: %{
+        id: "vector-2-1-1",
+        content: Phoenix.HTML.raw("<svg id=\"vector-2-1-1\"></svg>")
+      },
+      tiles: [late_tile]
+    }
+
+    socket = %Phoenix.LiveView.Socket{
+      assigns: %{
+        async_ref: :current_pan,
+        tile_cache_context: {:source, "css"},
+        tile_layer: %{defs: [], tiles: [loading_tile]},
+        __changed__: %{}
+      }
+    }
+
+    assert {:ok, updated} =
+             LiveMap.update(
+               %{
+                 tile_layer_delta: delta,
+                 async_ref: :previous_pan,
+                 tile_cache_context: {:source, "css"}
+               },
+               socket
+             )
+
+    assert updated.assigns.tile_layer.tiles == [loading_tile]
+    assert updated.assigns.tile_layer.cached_tiles["2/1/1"].state == "ready"
+  end
+
+  test "renders cached parent content instead of a spinner for loading child tiles" do
+    placeholder_tile = %{
+      type: :svg_use,
+      state: "loading",
+      placeholder: true,
+      fallback_tile: "1/0/0",
+      display_tile: "2/1/1",
+      z: 2,
+      x: 256,
+      y: 256,
+      width: 256,
+      height: 256,
+      view_box: "0.5 0.5 0.5 0.5",
+      def_id: "parent-definition",
+      source_tile: "2/1/1"
+    }
+
+    html =
+      LiveMap.live_map(%{
+        id: "cached-map",
+        class: nil,
+        title: "",
+        width: 256,
+        height: 256,
+        zoom: 2,
+        min_x: 256,
+        min_y: 256,
+        style: [],
+        zoom_in: [],
+        zoom_out: [],
+        myself: nil,
+        shape_overlays: [],
+        marker_overlays: [],
+        tile_layer: %{
+          defs: [Phoenix.HTML.raw("<svg id=\"parent-definition\"></svg>")],
+          tiles: [placeholder_tile]
+        }
+      })
+      |> Phoenix.HTML.Safe.to_iodata()
+      |> IO.iodata_to_binary()
+
+    assert html =~ ~s(data-live-map-tile-placeholder="parent")
+    assert html =~ ~s(data-live-map-fallback-tile="1/0/0")
+    assert html =~ ~s(<use href="#parent-definition")
+    refute html =~ "animateTransform"
   end
 
   test "update turns unfinished tiles into errors when vector streaming completes" do
