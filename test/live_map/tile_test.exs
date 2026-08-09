@@ -6,6 +6,24 @@ defmodule LiveMap.TileTest do
   alias LiveMap.Tile
   doctest Tile
 
+  test "provides built-in raster and vector sources" do
+    assert Tile.default_source() === %{
+             type: :raster,
+             url: "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+             version: nil,
+             max_zoom: nil,
+             headers: []
+           }
+
+    assert Tile.default_vector_source() === %{
+             type: :mvt,
+             url: "https://vector.openstreetmap.org/$VERSION/{zoom}/{x}/{y}.mvt",
+             version: "shortbread_v1",
+             max_zoom: 14,
+             headers: []
+           }
+  end
+
   property "conversion between x and longitude" do
     check all(
             zoom <- StreamData.integer(0..18),

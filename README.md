@@ -25,7 +25,8 @@ A LiveMap can be added to a LiveView by:
       module={LiveMap} id="live-map"
       title="Example Live Map"
       width="800" height="600"
-      latitude="10.4197639" longitude="107.1070841" zoom="11"
+      center="10.4197639,107.1070841" zoom="11"
+      rendering-type="vector"
     >
       <%# Styles slot %>
       <:style>
@@ -72,9 +73,8 @@ A LiveMap can be added to a LiveView by:
       <%# A single explicit marker %>
       <:marker
         id="harbor"
-        latitude={10.411379}
-        longitude={107.136224}
-        label="Harbor"
+        position="10.411379,107.136224"
+        title="Harbor"
       />
 
       <%# Add a slot body to <:marker> when you want custom HTML marker UI. %>
@@ -83,9 +83,8 @@ A LiveMap can be added to a LiveView by:
       <:marker
         :for={marker <- @visible_markers}
         id={marker.id}
-        latitude={marker.latitude}
-        longitude={marker.longitude}
-        label={marker.label}
+        position={{marker.latitude, marker.longitude}}
+        title={marker.label}
       />
     </.live_component>
 
@@ -95,15 +94,24 @@ Zoom controls are opt-in: LiveMap renders no zoom buttons by default. Add the
 `:zoom_in` and/or `:zoom_out` slots with HTML content to enable them, such as
 for interactive LiveView output.
 
-Each `:marker` slot entry must provide `latitude`, `longitude`, and `label`. The
+Each `:marker` slot entry must provide `position` and `title`. The
 optional `id` is used to generate a stable DOM id. LiveMap only projects and renders
 the markers it receives; deciding which markers to pass remains the responsibility of
 the parent LiveView. When the `:marker` slot body is omitted, LiveMap renders a
-default SVG marker pin with the marker label exposed through the SVG title. If a body is provided, it must be HTML content;
+default SVG marker pin with the marker title exposed through the SVG title. If a body is provided, it must be HTML content;
 LiveMap wraps it in a `<foreignObject>` automatically. This keeps the public API
 decoupled from the internal SVG rendering details while still allowing rich HTML
 marker UIs. No `:let` or projected slot assigns are required. You can pass a single
 marker directly, or emit multiple marker slots with `:for`.
+
+Like Google's [`<gmp-map>`](https://developers.google.com/maps/documentation/javascript/reference/map)
+and [`<gmp-advanced-marker>`](https://developers.google.com/maps/documentation/javascript/reference/advanced-markers)
+elements, `center` and `position` accept a `"latitude,longitude"` string.
+Elixir callers may also pass a
+`{latitude, longitude}` tuple or `%{lat: latitude, lng: longitude}` map.
+The map-level `latitude` and `longitude` attributes and the marker-level
+`latitude`, `longitude`, and `label` attributes are deprecated compatibility
+fallbacks. When both forms are supplied, `center`, `position`, and `title` win.
 
 Custom zoom controls follow the same rule: use `:zoom_in` and `:zoom_out` with
 HTML content only. LiveMap wraps that content for display inside the SVG control
@@ -117,28 +125,35 @@ elements for these overlays.
 
 HTML marker example:
 
-    <:marker id="harbor" latitude={10.411379} longitude={107.136224} label="Harbor">
+    <:marker id="harbor" position="10.411379,107.136224" title="Harbor">
       <button class="rounded-full bg-emerald-700 px-3 py-1 text-xs font-semibold text-white">
         Harbor
       </button>
     </:marker>
 
-## Tile Sources
+## Rendering Type and Tile Sources
 
-LiveMap keeps the existing raster OpenStreetMap source by default:
+Set `rendering-type` to the `raster|vector` enum to select LiveMap's built-in
+OpenStreetMap raster or Shortbread vector source. LiveMap keeps raster as the
+default for backward compatibility:
 
 ```elixir
 <.live_component
   module={LiveMap}
   id="live-map"
-  latitude={10.4197639}
-  longitude={107.1070841}
+  center="10.4197639,107.1070841"
   zoom={11}
-  tile_source={%{
-    url: "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
-  }}
+  rendering-type="raster"
 />
 ```
+
+Use `rendering-type="vector"` to switch to the built-in OSM vector source
+without configuring `tile_source`. The optional Req dependency is required for
+vector rendering.
+
+`tile_source` remains supported for backward compatibility and custom tile
+servers. If both attributes are supplied, `rendering-type` selects the built-in
+source.
 
 Tile source type is inferred from the URL by default: `.mvt` and `.pbf` URLs are
 treated as vector sources, everything else is treated as raster.
@@ -149,8 +164,7 @@ Shortbread MVT sources are server-rendered and support overzoom above level 14:
 <.live_component
   module={LiveMap}
   id="live-map"
-  latitude={10.4197639}
-  longitude={107.1070841}
+  center="10.4197639,107.1070841"
   zoom={15}
   tile_source={%{
     url: "https://vector.openstreetmap.org/$VERSION/{zoom}/{x}/{y}.mvt",
@@ -160,6 +174,38 @@ Shortbread MVT sources are server-rendered and support overzoom above level 14:
   }}
 />
 ```
+
+### Built-in vector style
+
+Vector maps use an SVG adaptation of the open source
+[VersaTiles Colorful](https://github.com/versatiles-org/versatiles-style) style
+for Shortbread tiles out of the box. The defaults include its land, water,
+road, building, boundary, and label palette plus a conservative label policy:
+country labels appear first, followed by capitals, cities, towns, and smaller
+places as the map zooms in. State/region labels are held back until zoom 7,
+and dense address and point-of-interest layers are hidden. Shortbread's English
+name is preferred when one is available.
+
+The built-in rules are applied before `styles`, so a Google Maps style JSON
+from a service such as Snazzy Maps can recolor the map or explicitly show and
+hide features:
+
+```elixir
+styles = "priv/map_style.json" |> File.read!() |> Jason.decode!()
+
+<.live_component
+  module={LiveMap}
+  id="styled-map"
+  center="10.4197639,107.1070841"
+  zoom={11}
+  rendering-type="vector"
+  styles={styles}
+/>
+```
+
+LiveMap supports the common Google style fields used for feature visibility,
+color, and stroke weight. The CSS custom properties shown in the main usage
+example remain available for smaller overrides without a style JSON.
 
 The tile source URL may use `{zoom}` or `{z}`, plus `{x}`, `{y}`, `{version}`,
 and `$VERSION` placeholders. `version` is only required when the URL contains a

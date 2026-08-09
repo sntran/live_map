@@ -26,13 +26,6 @@ defmodule LiveISS do
   def mount(_params, _session, socket) do
     if connected?(socket), do: :timer.send_interval(3000, self(), :tick)
 
-    mvt_source = %{
-      type: :mvt,
-      url: "https://vector.openstreetmap.org/$VERSION/{z}/{x}/{y}.mvt",
-      version: "shortbread_v1",
-      max_zoom: 14
-    }
-
     initial_pos = fetch_live_position()
 
     if connected?(socket) do
@@ -46,7 +39,6 @@ defmodule LiveISS do
        current_position: initial_pos,
        historical_path: if(initial_pos, do: [initial_pos], else: []),
        live_path: if(initial_pos, do: [initial_pos], else: []),
-       tile_source: mvt_source,
        zoom: 3,
        selected_style: "Midnight Commander"
      )}
@@ -79,7 +71,9 @@ defmodule LiveISS do
     ts_str = Enum.join(chunk, ",")
 
     # Use a longer delay and retry on failure so we don't drop chunks
-    case Req.get("https://api.wheretheiss.at/v1/satellites/25544/positions?timestamps=#{ts_str}", retry: false) do
+    case Req.get("https://api.wheretheiss.at/v1/satellites/25544/positions?timestamps=#{ts_str}",
+           retry: false
+         ) do
       {:ok, %{status: 200, body: positions}} ->
         # The API returns points in descending order (T-1, T-2...). 
         # We reverse them to be chronological (T-10..T-1) so they render correctly West-to-East.
@@ -137,8 +131,6 @@ defmodule LiveISS do
         nil
     end
   end
-
-
 
   defp terminator_polygon(solar_lat, solar_lon) do
     epsilon = 0.0001
@@ -218,12 +210,11 @@ defmodule LiveISS do
           :if={@current_position}
           module={LiveMap}
           id="iss-tracker-map"
-          latitude={@current_position.lat}
-          longitude={@current_position.lon}
+          center={{@current_position.lat, @current_position.lon}}
           zoom={@zoom}
           width={800}
           height={600}
-          tile_source={@tile_source}
+          rendering-type="vector"
           styles={get_style(@selected_style)}
         >
           <:style>{"
@@ -264,7 +255,7 @@ defmodule LiveISS do
             label="Live Track"
           />
 
-          <:marker id="iss" latitude={@current_position.lat} longitude={@current_position.lon} label="ISS">
+          <:marker id="iss" position={{@current_position.lat, @current_position.lon}} title="ISS">
             <div style="font-size: 32px; filter: drop-shadow(0px 0px 8px rgba(56, 189, 248, 0.8));">🛰️</div>
           </:marker>
 

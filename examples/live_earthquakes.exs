@@ -38,27 +38,12 @@ defmodule LiveEarthquakes do
       send(self(), :load_data)
     end
 
-    vector_source = %{
-      type: :mvt,
-      url: "https://vector.openstreetmap.org/$VERSION/{z}/{x}/{y}.mvt",
-      version: "shortbread_v1",
-      max_zoom: 14
-    }
-
-    raster_source = %{
-      type: :raster,
-      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      max_zoom: 19
-    }
-
     {:ok,
      assign(socket,
        page_title: "Global Earthquakes & Tectonic Plates",
        loading?: true,
        error: nil,
        rendering_type: "vector",
-       vector_source: vector_source,
-       raster_source: raster_source,
        zoom: @default_zoom,
        latitude: 0,
        longitude: 0,
@@ -251,14 +236,11 @@ defmodule LiveEarthquakes do
           :if={not @loading?}
           module={LiveMap}
           id="earthquakes-map"
-          latitude={@latitude}
-          longitude={@longitude}
+          center={{@latitude, @longitude}}
           zoom={@zoom}
           width={900}
           height={600}
-          tile_source={
-            if @rendering_type == "vector", do: @vector_source, else: @raster_source
-          }
+          rendering-type={@rendering_type}
         >
           <:polygon
             :for={plate <- @plates}
@@ -283,9 +265,8 @@ defmodule LiveEarthquakes do
           <:marker
             :for={eq <- @earthquakes}
             id={eq.id}
-            latitude={eq.latitude}
-            longitude={eq.longitude}
-            label={eq.label}
+            position={{eq.latitude, eq.longitude}}
+            title={eq.label}
           >
             <div style={"width: #{max(6, eq.mag * 2.5)}px; height: #{max(6, eq.mag * 2.5)}px; background-color: rgba(255, 0, 0, 0.6); border-radius: 50%; border: 1px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.5);"}></div>
           </:marker>

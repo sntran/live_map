@@ -7,6 +7,7 @@ defmodule LiveMap do
   use Phoenix.LiveComponent
   embed_templates("live_map/*")
 
+  alias LiveMap.Coordinate
   alias LiveMap.Marker
   alias LiveMap.Tile
 
@@ -74,11 +75,23 @@ defmodule LiveMap do
   attr(:width, :any, default: 300)
   attr(:height, :any, default: 150)
   attr(:title, :string, default: "")
-  attr(:latitude, :any, default: 0.0)
-  attr(:longitude, :any, default: 0.0)
+
+  attr(:center, :any,
+    default: nil,
+    doc: ~s(Map center as "latitude,longitude", a tuple, or a map with :lat and :lng)
+  )
+
+  attr(:latitude, :any, default: nil, doc: "Deprecated; use center instead")
+  attr(:longitude, :any, default: nil, doc: "Deprecated; use center instead")
   attr(:zoom, :any, default: 0)
   attr(:styles, :list, default: [])
-  attr(:tile_source, :map, default: Tile.default_source())
+
+  attr(:"rendering-type", :string,
+    default: nil,
+    doc: ~s(Rendering type enum: "raster" or "vector")
+  )
+
+  attr(:tile_source, :map, default: nil, doc: "Custom tile source and legacy rendering selector")
   attr(:tiles, :list, default: [])
   attr(:tile_layer, :map, default: %{defs: [], tiles: []})
   attr(:shape_overlays, :list, default: [])
@@ -111,9 +124,11 @@ defmodule LiveMap do
 
   slot :marker do
     attr(:id, :any)
-    attr(:latitude, :any, required: true)
-    attr(:longitude, :any, required: true)
-    attr(:label, :string, required: true)
+    attr(:position, :any, doc: ~s(Marker position in the same formats accepted by center))
+    attr(:title, :string, doc: "Marker rollover and accessibility text")
+    attr(:latitude, :any, doc: "Deprecated; use position instead")
+    attr(:longitude, :any, doc: "Deprecated; use position instead")
+    attr(:label, :string, doc: "Deprecated; use title instead")
   end
 
   @impl Phoenix.LiveComponent
@@ -185,8 +200,11 @@ defmodule LiveMap do
     |> Map.put_new(:polyline, [])
     |> Map.put_new(:polygon, [])
     |> Map.put_new(:marker, [])
-    |> Map.put_new(:latitude, 0.0)
-    |> Map.put_new(:longitude, 0.0)
+    |> Map.put_new(:center, nil)
+    |> Map.put_new(:latitude, nil)
+    |> Map.put_new(:longitude, nil)
+    |> Map.put_new(:"rendering-type", nil)
+    |> Map.put_new(:tile_source, nil)
     |> assign_prepared_layers()
   end
 
@@ -194,13 +212,12 @@ defmodule LiveMap do
     assigns = extract_assigns(socket_or_assigns)
     width = parse(assigns[:width], :integer)
     height = parse(assigns[:height], :integer)
-    latitude = parse(assigns[:latitude] || 0.0, :float)
-    longitude = parse(assigns[:longitude] || 0.0, :float)
+    {latitude, longitude} = center(assigns)
     zoom = parse(assigns[:zoom] || 0, :integer)
     styles = assigns[:styles] || []
     tiles = Tile.map(latitude, longitude, zoom, width, height)
     css = LiveMap.Style.to_css(styles)
-    tile_source = assigns[:tile_source] || Tile.default_source()
+    {rendering_type, tile_source} = tile_source(assigns)
 
     needs_new_layer? =
       assigns[:tile_layer] == nil or
@@ -270,6 +287,7 @@ defmodule LiveMap do
       |> Map.put(:height, height)
       |> Map.put(:latitude, latitude)
       |> Map.put(:longitude, longitude)
+      |> Map.put(:"rendering-type", rendering_type)
       |> Map.put(:zoom, zoom)
       |> Map.put(:min_x, min_x)
       |> Map.put(:min_y, min_y)
@@ -280,8 +298,22 @@ defmodule LiveMap do
       |> Map.put(:rendered_zoom, zoom)
       |> Map.put(:tile_layer, tile_layer)
       |> Map.put(:async_ref, ref)
-      |> Map.put(:shape_overlays, shape_overlays(%{assigns | zoom: zoom}, min_x, min_y))
-      |> Map.put(:marker_overlays, marker_overlays(%{assigns | zoom: zoom}, min_x, min_y))
+      |> Map.put(
+        :shape_overlays,
+        shape_overlays(
+          assigns |> Map.put(:zoom, zoom) |> Map.put(:longitude, longitude),
+          min_x,
+          min_y
+        )
+      )
+      |> Map.put(
+        :marker_overlays,
+        marker_overlays(
+          assigns |> Map.put(:zoom, zoom) |> Map.put(:longitude, longitude),
+          min_x,
+          min_y
+        )
+      )
       |> Map.put(:live_map_prepared, true)
 
     put_assigns(socket_or_assigns, base_assigns)
@@ -328,6 +360,32 @@ defmodule LiveMap do
     |> Enum.map(fn {marker, index} ->
       Marker.project(marker, map_id, zoom, min_x, min_y, index, map_longitude)
     end)
+  end
+
+  defp center(%{center: value}) when not is_nil(value) do
+    Coordinate.parse_pair(value, :center)
+  end
+
+  defp center(assigns) do
+    {
+      Coordinate.parse_number(Map.get(assigns, :latitude) || 0.0, :center),
+      Coordinate.parse_number(Map.get(assigns, :longitude) || 0.0, :center)
+    }
+  end
+
+  defp tile_source(%{"rendering-type": "raster"}), do: {"raster", Tile.default_source()}
+
+  defp tile_source(%{"rendering-type": "vector"}),
+    do: {"vector", Tile.default_vector_source()}
+
+  defp tile_source(%{"rendering-type": nil} = assigns) do
+    {nil, Map.get(assigns, :tile_source) || Tile.default_source()}
+  end
+
+  defp tile_source(assigns) do
+    raise ArgumentError,
+          "rendering-type must be \"raster\" or \"vector\", got: " <>
+            inspect(Map.get(assigns, :"rendering-type"))
   end
 
   defp parse(value, :integer) when is_binary(value) do

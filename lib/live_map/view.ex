@@ -11,8 +11,9 @@ defmodule LiveMap.View do
      socket
      |> assign_new(:width, fn -> params["width"] || 300 end)
      |> assign_new(:height, fn -> params["height"] || 150 end)
-     |> assign_new(:latitude, fn -> params["latitude"] || 0 end)
-     |> assign_new(:longitude, fn -> params["longitude"] || 0 end)
+     |> assign_new(:center, fn ->
+       params["center"] || {params["latitude"] || 0, params["longitude"] || 0}
+     end)
      |> assign_new(:zoom, fn -> params["zoom"] || 0 end)}
   end
 
@@ -21,7 +22,7 @@ defmodule LiveMap.View do
     <.live_component
       module={LiveMap} id="live-map"
       width={@width} height={@height}
-      latitude={@latitude} longitude={@longitude} zoom={@zoom}
+      center={@center} zoom={@zoom}
     >
       <:zoom_in>+</:zoom_in>
       <:zoom_out>-</:zoom_out>

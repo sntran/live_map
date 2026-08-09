@@ -6,7 +6,7 @@ defmodule LiveMap.MarkerTest do
   test "projects slot data into renderable marker overlay data" do
     marker =
       Marker.project(
-        %{id: 42, latitude: "0", longitude: "0", label: "Center marker"},
+        %{id: 42, position: "0,0", title: "Center marker"},
         "live-map",
         0,
         0,
@@ -17,6 +17,7 @@ defmodule LiveMap.MarkerTest do
 
     assert marker.id === "42"
     assert marker.dom_id === "live-map-marker-42"
+    assert marker.title === "Center marker"
     assert marker.label === "Center marker"
     assert_in_delta marker.x, 128.0, 1.0e-6
     assert_in_delta marker.y, 128.0, 1.0e-6
@@ -46,7 +47,7 @@ defmodule LiveMap.MarkerTest do
   test "uses fallback DOM ids and preserves float coordinates" do
     marker =
       Marker.project(
-        %{latitude: 1.5, longitude: 2.5, label: "Float marker", inner_block: fn -> nil end},
+        %{position: %{lat: 1.5, lng: 2.5}, title: "Float marker", inner_block: fn -> nil end},
         "live-map",
         1,
         0,
@@ -82,8 +83,62 @@ defmodule LiveMap.MarkerTest do
   end
 
   test "raises on invalid marker coordinates" do
-    assert_raise ArgumentError, ~r/invalid marker coordinate/, fn ->
-      Marker.project(%{latitude: "north", longitude: 0, label: "Bad marker"}, "live-map", 0, 0, 0, 0, 0.0)
+    assert_raise ArgumentError, ~r/invalid position/, fn ->
+      Marker.project(%{position: "north,0", title: "Bad marker"}, "live-map", 0, 0, 0, 0, 0.0)
+    end
+  end
+
+  test "keeps latitude, longitude, and label as deprecated fallbacks" do
+    marker =
+      Marker.project(
+        %{latitude: "1.5", longitude: "2.5", label: "Legacy marker"},
+        "live-map",
+        1,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert marker.latitude === 1.5
+    assert marker.longitude === 2.5
+    assert marker.title === "Legacy marker"
+  end
+
+  test "prefers position and title over deprecated marker attributes" do
+    marker =
+      Marker.project(
+        %{
+          position: {1, 2},
+          title: "Current marker",
+          latitude: 30,
+          longitude: 40,
+          label: "Legacy marker"
+        },
+        "live-map",
+        1,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert marker.latitude === 1.0
+    assert marker.longitude === 2.0
+    assert marker.title === "Current marker"
+  end
+
+  test "requires a complete position and a title" do
+    assert_raise ArgumentError, ~r/marker requires position/, fn ->
+      Marker.project(%{title: "Missing"}, "live-map", 0, 0, 0, 0, 0.0)
+    end
+
+    assert_raise ArgumentError, ~r/must both be provided/, fn ->
+      Marker.project(%{latitude: 1, title: "Partial"}, "live-map", 0, 0, 0, 0, 0.0)
+    end
+
+    assert_raise ArgumentError, ~r/marker requires title/, fn ->
+      Marker.project(%{position: {1, 2}}, "live-map", 0, 0, 0, 0, 0.0)
     end
   end
 

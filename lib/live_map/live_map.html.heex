@@ -156,10 +156,11 @@
       class="live-map-marker"
       data-live-map-marker="true"
       data-live-map-marker-id={marker.id}
-      data-live-map-marker-label={marker.label}
+      data-live-map-marker-title={marker.title}
+      data-live-map-marker-label={marker.title}
       style={"transform: translate(#{marker.x}px, #{marker.y}px) scale(#{marker.scale});"}
     >
-      <title>{marker.label}</title>
+      <title>{marker.title}</title>
 
       <% marker_body = if marker.slot.inner_block, do: render_slot(marker.slot), else: nil %>
 

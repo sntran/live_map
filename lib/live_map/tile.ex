@@ -63,6 +63,13 @@ defmodule LiveMap.Tile do
     max_zoom: nil,
     headers: []
   }
+  @default_vector_source %{
+    type: :mvt,
+    url: "https://vector.openstreetmap.org/$VERSION/{zoom}/{x}/{y}.mvt",
+    version: "shortbread_v1",
+    max_zoom: 14,
+    headers: []
+  }
   @default_mvt_max_zoom 14
   @default_user_agent "LiveMap/#{Application.spec(:live_map, :vsn) || "dev"}"
   @req_module :"Elixir.Req"
@@ -78,6 +85,18 @@ defmodule LiveMap.Tile do
   """
   @spec default_source() :: source()
   def default_source, do: @default_source
+
+  @doc """
+  Returns the default Shortbread-compatible OpenStreetMap vector tile source.
+
+  Examples:
+
+      iex> LiveMap.Tile.default_vector_source().type
+      :mvt
+
+  """
+  @spec default_vector_source() :: source()
+  def default_vector_source, do: @default_vector_source
 
   @doc """
   Retrieves a tile at certain coordinates and zoom level.

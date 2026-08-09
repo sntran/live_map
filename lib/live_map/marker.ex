@@ -1,23 +1,24 @@
 defmodule LiveMap.Marker do
   @moduledoc false
 
+  alias LiveMap.Coordinate
   alias LiveMap.Tile
 
   def project(marker_slot, map_id, zoom, min_x, min_y, index, map_longitude) do
-    latitude = parse_float(marker_slot.latitude)
-    raw_longitude = parse_float(marker_slot.longitude)
+    {latitude, raw_longitude} = marker_position(marker_slot)
     k = round((map_longitude - raw_longitude) / 360.0)
     longitude = raw_longitude + k * 360.0
 
     id = normalize_id(Map.get(marker_slot, :id))
-    label = marker_slot.label
+    title = marker_title(marker_slot)
     x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
     y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
 
     %{
       id: id,
       dom_id: dom_id(map_id, id, index),
-      label: label,
+      title: title,
+      label: title,
       has_body: Map.get(marker_slot, :inner_block) != nil,
       latitude: latitude,
       longitude: longitude,
@@ -28,7 +29,8 @@ defmodule LiveMap.Marker do
     }
   end
 
-  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index, map_longitude) when type in [:polygon, :polyline] do
+  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index, map_longitude)
+      when type in [:polygon, :polyline] do
     id = normalize_id(Map.get(shape_slot, :id))
     label = Map.get(shape_slot, :label)
     points = project_points(Map.fetch!(shape_slot, :points), zoom, min_x, min_y, map_longitude)
@@ -57,11 +59,40 @@ defmodule LiveMap.Marker do
   defp normalize_id(nil), do: nil
   defp normalize_id(id), do: to_string(id)
 
+  defp marker_position(%{position: position}) when not is_nil(position) do
+    Coordinate.parse_pair(position, :position)
+  end
+
+  defp marker_position(marker_slot) do
+    case {Map.get(marker_slot, :latitude), Map.get(marker_slot, :longitude)} do
+      {nil, nil} ->
+        raise ArgumentError,
+              "marker requires position; latitude and longitude are deprecated fallbacks"
+
+      {latitude, longitude} when not is_nil(latitude) and not is_nil(longitude) ->
+        {
+          Coordinate.parse_number(latitude, :position),
+          Coordinate.parse_number(longitude, :position)
+        }
+
+      _partial ->
+        raise ArgumentError,
+              "marker latitude and longitude must both be provided when position is omitted"
+    end
+  end
+
+  defp marker_title(%{title: title}) when not is_nil(title), do: title
+  defp marker_title(%{label: label}) when not is_nil(label), do: label
+
+  defp marker_title(_marker_slot) do
+    raise ArgumentError, "marker requires title; label is a deprecated fallback"
+  end
+
   defp project_points(points, zoom, min_x, min_y, map_longitude) do
     points
     |> Enum.reduce({[], 0, nil}, fn point, {acc, longitude_offset, prev_lon} ->
-      latitude = parse_float(Map.fetch!(point, :latitude))
-      raw_longitude = parse_float(Map.fetch!(point, :longitude))
+      latitude = Coordinate.parse_number(Map.fetch!(point, :latitude), :shape)
+      raw_longitude = Coordinate.parse_number(Map.fetch!(point, :longitude), :shape)
 
       {new_offset, prev_lon} =
         case prev_lon do
@@ -115,15 +146,5 @@ defmodule LiveMap.Marker do
 
   defp points_attribute(points) do
     Enum.map_join(points, " ", fn {x, y} -> "#{x},#{y}" end)
-  end
-
-  defp parse_float(value) when is_float(value), do: value
-  defp parse_float(value) when is_integer(value), do: value / 1
-
-  defp parse_float(value) do
-    case Float.parse(to_string(value)) do
-      {parsed, _rest} -> parsed
-      :error -> raise ArgumentError, "invalid marker coordinate: #{inspect(value)}"
-    end
   end
 end

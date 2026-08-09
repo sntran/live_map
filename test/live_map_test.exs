@@ -96,6 +96,7 @@ defmodule LiveMapTest do
       [html_marker] = Floki.find(marker, "div[data-html-marker='center']")
 
       assert Floki.attribute(marker, "data-live-map-marker-label") === ["Center marker"]
+      assert Floki.attribute(marker, "data-live-map-marker-title") === ["Center marker"]
       assert Floki.find(marker, "title") |> Floki.text() === "Center marker"
       assert Floki.text(html_marker) |> String.trim() === "Center marker"
     end
@@ -188,6 +189,70 @@ defmodule LiveMapTest do
   end
 
   describe "tiles" do
+    test "uses the raster rendering type by default" do
+      rendered = component(zoom: 0)
+
+      assert rendered =~ "https://tile.openstreetmap.org/0/0/0.png"
+    end
+
+    test "selects the built-in sources with rendering-type" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, raster_socket} =
+               LiveMap.update(
+                 %{
+                   id: "raster-map",
+                   width: 0,
+                   height: 0,
+                   zoom: 0,
+                   "rendering-type": "raster"
+                 },
+                 socket
+               )
+
+      assert raster_socket.assigns.tile_source === LiveMap.Tile.default_source()
+
+      assert {:ok, vector_socket} =
+               LiveMap.update(
+                 %{
+                   id: "vector-map",
+                   width: 0,
+                   height: 0,
+                   zoom: 0,
+                   "rendering-type": "vector"
+                 },
+                 socket
+               )
+
+      assert vector_socket.assigns.tile_source === LiveMap.Tile.default_vector_source()
+    end
+
+    test "rendering-type takes precedence over tile_source" do
+      custom_source = %{url: "https://tiles.example.com/{z}/{x}/{y}.png"}
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, updated} =
+               LiveMap.update(
+                 %{
+                   id: "raster-map",
+                   width: 0,
+                   height: 0,
+                   zoom: 0,
+                   tile_source: custom_source,
+                   "rendering-type": "raster"
+                 },
+                 socket
+               )
+
+      assert updated.assigns.tile_source === LiveMap.Tile.default_source()
+    end
+
+    test "rejects unsupported rendering types" do
+      assert_raise ArgumentError, ~r/rendering-type must be/, fn ->
+        component([{:"rendering-type", "terrain"}])
+      end
+    end
+
     test "should throw at negative zoom level" do
       assert_raise FunctionClauseError, fn ->
         component(zoom: -1)
@@ -430,6 +495,40 @@ defmodule LiveMapTest do
   end
 
   describe "coordinate updates propagate to LiveMap component" do
+    test "accepts a Google-style center and gives it precedence over legacy coordinates" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, updated} =
+               LiveMap.update(
+                 %{
+                   id: "test-map",
+                   width: 0,
+                   height: 0,
+                   center: "10.3458, 107.0705",
+                   latitude: 1,
+                   longitude: 2,
+                   zoom: 1
+                 },
+                 socket
+               )
+
+      assert updated.assigns.latitude === 10.3458
+      assert updated.assigns.longitude === 107.0705
+    end
+
+    test "accepts center tuples and LatLng-style maps" do
+      for center <- [{10, 20}, %{lat: 10, lng: 20}, %{"lat" => 10, "lng" => 20}] do
+        rendered = component(center: center, zoom: 1)
+        assert rendered =~ "<svg"
+      end
+    end
+
+    test "rejects an invalid center" do
+      assert_raise ArgumentError, ~r/invalid center/, fn ->
+        component(center: "north,west")
+      end
+    end
+
     test "viewBox updates when coordinates change" do
       # Render the component at initial coordinates (0, 0)
       initial_html =
@@ -578,17 +677,15 @@ defmodule LiveMapTest do
           id={@id}
           width={@width}
           height={@height}
-          latitude={@latitude}
-          longitude={@longitude}
+          center={{@latitude, @longitude}}
           zoom={@zoom}
         >
           <:marker
             :if={@marker_body == :html}
             :for={marker <- @markers}
             id={marker.id}
-            latitude={marker.latitude}
-            longitude={marker.longitude}
-            label={marker.label}
+            position={{marker.latitude, marker.longitude}}
+            title={marker.label}
           >
             <div data-html-marker={marker.id} class="rounded-full bg-sky-600 px-3 py-1 text-white">
               {marker.label}
@@ -599,18 +696,16 @@ defmodule LiveMapTest do
             :if={@marker_body == :none}
             :for={marker <- @markers}
             id={marker.id}
-            latitude={marker.latitude}
-            longitude={marker.longitude}
-            label={marker.label}
+            position={{marker.latitude, marker.longitude}}
+            title={marker.label}
           />
 
           <:marker
             :if={@marker_body == :blank}
             :for={marker <- @markers}
             id={marker.id}
-            latitude={marker.latitude}
-            longitude={marker.longitude}
-            label={marker.label}
+            position={{marker.latitude, marker.longitude}}
+            title={marker.label}
           >
           </:marker>
         </.live_component>

@@ -56,6 +56,11 @@ defmodule LiveMap.CLI do
       |> Map.put(:tile_source, build_tile_source(opts))
       |> Map.put(:sync, true)
 
+    assigns =
+      assigns
+      |> Map.put(:center, {assigns.latitude, assigns.longitude})
+      |> Map.drop([:latitude, :longitude])
+
     assigns
     |> LiveMap.render()
     |> Phoenix.HTML.Safe.to_iodata()
