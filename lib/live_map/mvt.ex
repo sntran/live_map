@@ -45,7 +45,8 @@ defmodule LiveMap.MVT do
       |> Enum.filter(fn {field_number, wire_type, _value} ->
         field_number == 3 and wire_type == 2
       end)
-      |> Enum.map(fn {_field_number, _wire_type, layer_binary} -> parse_layer(layer_binary) end)
+      |> Task.async_stream(fn {_field_number, _wire_type, layer_binary} -> parse_layer(layer_binary) end, ordered: true, timeout: :infinity)
+      |> Enum.map(fn {:ok, result} -> result end)
       |> collect_results()
     end
   end
@@ -78,9 +79,9 @@ defmodule LiveMap.MVT do
     with {:ok, fields} <- parse_message(binary),
          {:ok, geometry_type} <- parse_geometry_type(optional_varint(fields, 3, nil)),
          {:ok, tags} <- packed_varints(fields, 2),
-         {:ok, geometry_commands} <- packed_varints(fields, 4),
+         {:ok, geometry_binary} <- extract_packed_binary(fields, 4),
          {:ok, properties} <- decode_tags(tags, keys, values),
-         {:ok, geometry} <- decode_geometry(geometry_type, geometry_commands) do
+         {:ok, geometry} <- decode_geometry(geometry_type, geometry_binary) do
       {:ok,
        %{
          id: optional_varint(fields, 1, nil),
@@ -110,11 +111,30 @@ defmodule LiveMap.MVT do
     end
   end
 
+  defp extract_packed_binary(fields, field_number) do
+    fields
+    |> Enum.reduce_while({:ok, []}, fn
+      {number, 2, packed_binary}, {:ok, acc} when number == field_number ->
+        {:cont, {:ok, [packed_binary | acc]}}
+      {number, 0, value}, {:ok, acc} when number == field_number ->
+        {:cont, {:ok, [encode_varint(value) | acc]}}
+      _other, acc ->
+        {:cont, acc}
+    end)
+    |> case do
+      {:ok, iodata} -> {:ok, iodata |> Enum.reverse() |> IO.iodata_to_binary()}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp encode_varint(value) when value < 128, do: <<value>>
+  defp encode_varint(value), do: <<(band(value, 127) ||| 128), encode_varint(value >>> 7)::binary>>
+
   defp decode_geometry(:point, commands), do: decode_points(commands, 0, 0, [])
   defp decode_geometry(:line, commands), do: decode_line_parts(commands, 0, 0, [], [])
   defp decode_geometry(:polygon, commands), do: decode_polygon_rings(commands, 0, 0, [], [])
 
-  defp decode_points([], _x, _y, points), do: {:ok, Enum.reverse(points)}
+  defp decode_points(<<>>, _x, _y, points), do: {:ok, Enum.reverse(points)}
 
   defp decode_points(commands, x, y, points) do
     with {:ok, {command_id, count}, rest} <- next_command(commands),
@@ -131,9 +151,9 @@ defmodule LiveMap.MVT do
     end
   end
 
-  defp decode_line_parts([], _x, _y, [], parts), do: {:ok, Enum.reverse(parts)}
+  defp decode_line_parts(<<>>, _x, _y, [], parts), do: {:ok, Enum.reverse(parts)}
 
-  defp decode_line_parts([], _x, _y, current_part, parts) do
+  defp decode_line_parts(<<>>, _x, _y, current_part, parts) do
     finalize_line_part(current_part, parts)
   end
 
@@ -167,9 +187,9 @@ defmodule LiveMap.MVT do
     end
   end
 
-  defp decode_polygon_rings([], _x, _y, [], rings), do: {:ok, Enum.reverse(rings)}
+  defp decode_polygon_rings(<<>>, _x, _y, [], rings), do: {:ok, Enum.reverse(rings)}
 
-  defp decode_polygon_rings([], _x, _y, _current_ring, _rings),
+  defp decode_polygon_rings(<<>>, _x, _y, _current_ring, _rings),
     do: {:error, :unterminated_polygon_ring}
 
   defp decode_polygon_rings(commands, x, y, current_ring, rings) do
@@ -269,8 +289,8 @@ defmodule LiveMap.MVT do
     end
   end
 
-  defp next_integer([value | rest]) when is_integer(value), do: {:ok, value, rest}
-  defp next_integer(_other), do: {:error, :truncated_geometry}
+  defp next_integer(<<>>), do: {:error, :truncated_geometry}
+  defp next_integer(binary), do: parse_varint(binary)
 
   defp parse_geometry_type(1), do: {:ok, :point}
   defp parse_geometry_type(2), do: {:ok, :line}
@@ -430,21 +450,40 @@ defmodule LiveMap.MVT do
   defp parse_field_value(5, _binary), do: {:error, :truncated_fixed32}
   defp parse_field_value(wire_type, _binary), do: {:error, {:unsupported_wire_type, wire_type}}
 
-  defp parse_varint(binary), do: parse_varint(binary, 0, 0)
-  defp parse_varint(<<>>, _shift, _value), do: {:error, :truncated_varint}
+  defp parse_varint(<<0::1, v1::7, rest::binary>>), do: {:ok, v1, rest}
 
-  defp parse_varint(_binary, shift, _value) when shift >= 70 do
+  defp parse_varint(<<1::1, v1::7, 0::1, v2::7, rest::binary>>) do
+    {:ok, v1 ||| (v2 <<< 7), rest}
+  end
+
+  defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 0::1, v3::7, rest::binary>>) do
+    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14), rest}
+  end
+
+  defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 1::1, v3::7, 0::1, v4::7, rest::binary>>) do
+    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14) ||| (v4 <<< 21), rest}
+  end
+
+  defp parse_varint(<<1::1, v1::7, 1::1, v2::7, 1::1, v3::7, 1::1, v4::7, 0::1, v5::7, rest::binary>>) do
+    {:ok, v1 ||| (v2 <<< 7) ||| (v3 <<< 14) ||| (v4 <<< 21) ||| (v5 <<< 28), rest}
+  end
+
+  defp parse_varint(binary) do
+    parse_varint_slow(binary, 0, 0)
+  end
+
+  defp parse_varint_slow(<<>>, _shift, _value), do: {:error, :truncated_varint}
+
+  defp parse_varint_slow(_binary, shift, _value) when shift >= 70 do
     {:error, :varint_overflow}
   end
 
-  defp parse_varint(<<byte, rest::binary>>, shift, value) do
-    next_value = value ||| (byte &&& 0x7F) <<< shift
+  defp parse_varint_slow(<<0::1, v::7, rest::binary>>, shift, value) do
+    {:ok, value ||| (v <<< shift), rest}
+  end
 
-    if (byte &&& 0x80) == 0 do
-      {:ok, next_value, rest}
-    else
-      parse_varint(rest, shift + 7, next_value)
-    end
+  defp parse_varint_slow(<<1::1, v::7, rest::binary>>, shift, value) do
+    parse_varint_slow(rest, shift + 7, value ||| (v <<< shift))
   end
 
   defp collect_results(results) do
@@ -803,14 +842,10 @@ defmodule LiveMap.MVT do
   defp format_number(number) when is_integer(number), do: Integer.to_string(number)
 
   defp format_number(number) when is_float(number) do
-    number
-    |> :erlang.float_to_binary(decimals: 6)
-    |> String.trim_trailing("0")
-    |> String.trim_trailing(".")
-    |> case do
-      "-0" -> "0"
-      "" -> "0"
-      value -> value
+    if trunc(number) == number do
+      Integer.to_string(trunc(number))
+    else
+      :erlang.float_to_binary(number, [{:decimals, 4}, :compact])
     end
   end
 

@@ -25,6 +25,13 @@ defmodule LiveMap.Tile do
   @type prepared_tile_layer :: %{
           required(:source) => source(),
           required(:defs) => list(),
+          optional(:definitions) => map(),
+          optional(:definition_order) => list(String.t()),
+          required(:tiles) => list(map())
+        }
+
+  @type vector_tile_delta :: %{
+          optional(:definition) => map(),
           required(:tiles) => list(map())
         }
 
@@ -197,10 +204,10 @@ defmodule LiveMap.Tile do
 
   Examples:
 
-      # At zoom 0, the whole world is rendered in 1 tile.
       iex> center = LiveMap.Tile.at(0, 0, 0)
-      iex> [center] == LiveMap.Tile.map(center, 256, 256)
-      true
+      iex> [tile] = LiveMap.Tile.map(center, 256, 256)
+      iex> {tile.x, tile.y, tile.z}
+      {0, 0, 0}
 
       # At zoom 1, 4 tiles are used on a 512x512 map.
       iex> center = LiveMap.Tile.at(0, 0, 1)
@@ -216,7 +223,6 @@ defmodule LiveMap.Tile do
   """
   @spec map(t(), number(), number(), function()) :: list()
   def map(center, width, height, mapper \\ &Function.identity/1)
-
 
   def map(%Tile{raw_x: center_x, raw_y: center_y, z: zoom}, width, height, mapper)
       when zoom >= 0 do
@@ -284,8 +290,9 @@ defmodule LiveMap.Tile do
       "https://tiles.example.com/0/0/0.png"
 
   """
-  @spec prepare_layer(list(map()), map() | nil) :: prepared_tile_layer()
-  def prepare_layer(tiles, source, custom_css \\ "") when is_list(tiles) do
+  @spec prepare_layer(list(map()), map() | nil, map()) :: prepared_tile_layer()
+  def prepare_layer(tiles, source, existing_layer \\ %{defs: [], tiles: []})
+      when is_list(tiles) do
     source = normalize_source(source)
 
     case source.type do
@@ -299,48 +306,116 @@ defmodule LiveMap.Tile do
       :mvt ->
         ensure_req!()
 
-        vector_layer = prepare_vector_layer(tiles, source, custom_css)
-        Map.put(vector_layer, :source, source)
+        definitions = layer_definitions(existing_layer)
+        definition_order = layer_definition_order(existing_layer, definitions)
+        definition_ids = definitions |> Map.keys() |> MapSet.new()
+
+        existing_tiles_map =
+          existing_layer.tiles
+          |> Enum.filter(fn tile ->
+            tile.state == "ready" and is_binary(tile[:display_tile]) and
+              MapSet.member?(definition_ids, tile.def_id)
+          end)
+          |> Map.new(fn tile -> {tile.display_tile, tile} end)
+
+        prepared_tiles =
+          Enum.map(tiles, fn tile ->
+            display_tile = format_display_tile(tile)
+
+            Map.get(existing_tiles_map, display_tile) || prepare_loading_tile(tile, source)
+          end)
+
+        %{
+          source: source,
+          tiles: prepared_tiles
+        }
+        |> put_visible_definitions(definitions, definition_order)
     end
   end
 
-  defp prepare_vector_layer([], _source, _custom_css), do: %{defs: [], tiles: []}
+  @doc """
+  Fetches and decodes the vector layer for the given tiles and source.
+  """
+  def fetch_vector_layer(
+        tiles,
+        source,
+        custom_css \\ "",
+        existing_layer \\ %{defs: [], tiles: []}
+      ) do
+    source = normalize_source(source)
 
-  defp prepare_vector_layer(tiles, source, custom_css) do
-    requests = build_vector_requests(tiles, source, custom_css)
-    results = fetch_vector_results(requests)
+    if source.type == :mvt do
+      prepared_layer = prepare_layer(tiles, source, existing_layer)
 
-    defs =
-      requests
-      |> Map.values()
-      |> Enum.flat_map(fn request ->
-        case Map.get(results, request.key, {:error, sanitize_error(:fetch, :task_exit)}) do
-          {:ok, svg_binary} ->
-            [
-              Phoenix.HTML.raw(
-                inject_definition_id(svg_binary, request.def_id, request.source_tile)
-              )
-            ]
+      tiles
+      |> build_pending_vector_requests(prepared_layer, source, custom_css)
+      |> fetch_vector_results()
+      |> Enum.reduce(prepared_layer, fn {request, result}, layer ->
+        merge_vector_delta(layer, prepare_vector_delta(request, result))
+      end)
+      |> complete_vector_layer()
+    else
+      prepare_layer(tiles, source, existing_layer)
+    end
+  end
 
-          {:error, _error} ->
-            []
-        end
+  @doc false
+  @spec stream_vector_layer(
+          list(map()),
+          map(),
+          String.t(),
+          prepared_tile_layer(),
+          (vector_tile_delta() -> any())
+        ) :: :ok
+  def stream_vector_layer(tiles, source, custom_css, prepared_layer, on_result)
+      when is_list(tiles) and is_function(on_result, 1) do
+    source = normalize_source(source)
+
+    if source.type != :mvt do
+      raise ArgumentError, "stream_vector_layer/5 requires an MVT tile source"
+    end
+
+    tiles
+    |> build_pending_vector_requests(prepared_layer, source, custom_css)
+    |> fetch_vector_results()
+    |> Enum.each(fn {request, result} -> on_result.(prepare_vector_delta(request, result)) end)
+
+    :ok
+  end
+
+  @doc false
+  @spec merge_vector_delta(map(), vector_tile_delta()) :: map()
+  def merge_vector_delta(layer, delta) do
+    replacement_tiles = Map.new(delta.tiles, &{&1.display_tile, &1})
+
+    tiles =
+      Enum.map(layer.tiles, fn tile ->
+        Map.get(replacement_tiles, tile[:display_tile], tile)
       end)
 
-    prepared_tiles =
-      requests
-      |> Map.values()
-      |> Enum.flat_map(fn request ->
-        case Map.get(results, request.key, {:error, sanitize_error(:fetch, :task_exit)}) do
-          {:ok, _svg_binary} ->
-            Enum.map(request.display_tiles, &prepare_vector_tile(&1, request))
+    definitions = layer_definitions(layer)
+    definition_order = layer_definition_order(layer, definitions)
 
-          {:error, error_meta} ->
-            Enum.map(request.display_tiles, &prepare_error_tile(&1, error_meta))
-        end
+    {definitions, definition_order} =
+      put_definition(definitions, definition_order, delta[:definition])
+
+    layer
+    |> Map.put(:tiles, tiles)
+    |> put_visible_definitions(definitions, definition_order)
+  end
+
+  @doc false
+  @spec complete_vector_layer(map()) :: map()
+  def complete_vector_layer(layer) do
+    error = sanitize_error(:fetch, :task_exit)
+
+    tiles =
+      Enum.map(layer.tiles, fn
+        %{state: "loading"} = tile -> prepare_error_tile(tile, error)
+        tile -> tile
       end)
 
-    %{defs: defs, tiles: prepared_tiles}
+    %{layer | tiles: tiles}
   end
 
   defp prepare_raster_tile(tile, source) do
@@ -363,9 +438,20 @@ defmodule LiveMap.Tile do
       request = vector_request(tile, source, custom_css)
 
       Map.update(requests, request.key, request, fn existing ->
-        %{existing | display_tiles: existing.display_tiles ++ [request.display_tile]}
+        %{existing | display_tiles: [request.display_tile | existing.display_tiles]}
       end)
     end)
+  end
+
+  defp build_pending_vector_requests(tiles, prepared_layer, source, custom_css) do
+    pending_display_tiles =
+      prepared_layer.tiles
+      |> Enum.filter(&(&1.state == "loading"))
+      |> MapSet.new(& &1.display_tile)
+
+    tiles
+    |> Enum.filter(&MapSet.member?(pending_display_tiles, format_display_tile(&1)))
+    |> build_vector_requests(source, custom_css)
   end
 
   defp vector_request(tile, source, custom_css) do
@@ -390,6 +476,8 @@ defmodule LiveMap.Tile do
       "live-map-vector-source-#{source_zoom}-#{source_tile.x}-#{source_tile.y}-#{short_hash(source_url)}"
 
     display_tile = %{
+      display_tile: format_display_tile(tile),
+      z: tile.z,
       x: tile.x * 256,
       y: tile.y * 256,
       width: 256,
@@ -414,23 +502,25 @@ defmodule LiveMap.Tile do
     requests
     |> Map.values()
     |> Task.async_stream(&fetch_vector_request/1,
-      max_concurrency: max(1, System.schedulers_online()),
+      max_concurrency: vector_tile_concurrency(),
       timeout: 30_000,
-      ordered: false
+      ordered: false,
+      zip_input_on_exit: true
     )
-    |> Enum.reduce(%{}, fn
-      {:ok, {key, result}}, acc ->
-        Map.put(acc, key, result)
+    |> Stream.flat_map(fn
+      {:ok, {request, result}} ->
+        [{request, result}]
 
-      {:exit, reason}, acc ->
-        Map.put(acc, {:task_exit, map_size(acc)}, {:error, sanitize_error(:fetch, reason)})
+      {:exit, {request, reason}} ->
+        Logger.error("LiveMap vector tile task exited: #{inspect(reason)}")
+        [{request, {:error, sanitize_error(:fetch, reason)}}]
     end)
   end
 
   defp fetch_vector_request(request) do
     result =
       case fetch_vector_body(request.url, request.headers) do
-      {:ok, body} ->
+        {:ok, body} ->
           case MVT.decode(body, id_prefix: request.def_id, custom_css: request.custom_css) do
             {:ok, svg} ->
               {:ok, svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()}
@@ -448,7 +538,7 @@ defmodule LiveMap.Tile do
           {:error, sanitize_error(:fetch, reason)}
       end
 
-    {request.key, result}
+    {request, result}
   end
 
   defp fetch_vector_body(url, headers) do
@@ -478,6 +568,8 @@ defmodule LiveMap.Tile do
     %{
       type: :svg_use,
       def_id: request.def_id,
+      display_tile: display_tile.display_tile,
+      z: display_tile.z,
       x: display_tile.x,
       y: display_tile.y,
       width: display_tile.width,
@@ -491,6 +583,8 @@ defmodule LiveMap.Tile do
   defp prepare_error_tile(display_tile, error_meta) do
     %{
       type: :error,
+      display_tile: display_tile.display_tile,
+      z: display_tile.z,
       x: display_tile.x,
       y: display_tile.y,
       width: display_tile.width,
@@ -498,7 +592,45 @@ defmodule LiveMap.Tile do
       state: "error",
       error_kind: error_meta.kind,
       error_reason: error_meta.reason,
+      source_tile: formatted_source_tile(display_tile.source_tile)
+    }
+  end
+
+  defp prepare_loading_tile(tile, source) do
+    request = vector_request(tile, source, "")
+    display_tile = request.display_tile
+
+    %{
+      type: :svg_use,
+      state: "loading",
+      display_tile: display_tile.display_tile,
+      z: display_tile.z,
+      x: display_tile.x,
+      y: display_tile.y,
+      width: display_tile.width,
+      height: display_tile.height,
+      view_box: "0 0 256 256",
+      def_id: "loading-#{display_tile.display_tile}",
       source_tile: format_source_tile(display_tile.source_tile)
+    }
+  end
+
+  defp prepare_vector_delta(request, {:ok, svg_binary}) do
+    definition = %{
+      id: request.def_id,
+      content:
+        Phoenix.HTML.raw(inject_definition_id(svg_binary, request.def_id, request.source_tile))
+    }
+
+    %{
+      definition: definition,
+      tiles: Enum.map(request.display_tiles, &prepare_vector_tile(&1, request))
+    }
+  end
+
+  defp prepare_vector_delta(request, {:error, error_meta}) do
+    %{
+      tiles: Enum.map(request.display_tiles, &prepare_error_tile(&1, error_meta))
     }
   end
 
@@ -666,6 +798,15 @@ defmodule LiveMap.Tile do
     """
   end
 
+  defp vector_tile_concurrency do
+    default = min(8, max(1, System.schedulers_online()))
+
+    case Application.get_env(:live_map, :vector_tile_concurrency, default) do
+      concurrency when is_integer(concurrency) and concurrency > 0 -> concurrency
+      _invalid -> default
+    end
+  end
+
   defp child_view_box(fetch_x, fetch_y, overzoom_scale) do
     offset_x = rem(fetch_x, overzoom_scale)
     offset_y = rem(fetch_y, overzoom_scale)
@@ -712,7 +853,84 @@ defmodule LiveMap.Tile do
     end
   end
 
+  defp normalize_definitions(definitions) when is_list(definitions) do
+    Enum.reduce(definitions, %{}, fn
+      %{id: id, content: content}, acc when is_binary(id) ->
+        Map.put(acc, id, %{id: id, content: content})
+
+      definition, acc ->
+        case definition_id(definition) do
+          nil -> acc
+          id -> Map.put(acc, id, %{id: id, content: definition})
+        end
+    end)
+  end
+
+  defp layer_definitions(%{definitions: definitions}) when map_size(definitions) > 0,
+    do: definitions
+
+  defp layer_definitions(layer), do: normalize_definitions(layer.defs)
+
+  defp layer_definition_order(%{definition_order: order}, definitions) when is_list(order) do
+    Enum.filter(order, &Map.has_key?(definitions, &1))
+  end
+
+  defp layer_definition_order(layer, definitions) do
+    layer.defs
+    |> Enum.map(&definition_id/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&Map.has_key?(definitions, &1))
+  end
+
+  defp put_definition(definitions, order, nil), do: {definitions, order}
+
+  defp put_definition(definitions, order, %{id: id} = definition) do
+    order = if Map.has_key?(definitions, id), do: order, else: order ++ [id]
+    {Map.put(definitions, id, definition), order}
+  end
+
+  defp put_visible_definitions(layer, definitions, order) do
+    active_ids =
+      layer.tiles
+      |> Enum.filter(&(&1.state == "ready" and is_binary(&1[:def_id])))
+      |> Enum.map(& &1.def_id)
+      |> Enum.uniq()
+
+    active_set = MapSet.new(active_ids)
+    ordered_ids = Enum.filter(order, &MapSet.member?(active_set, &1))
+    ordered_set = MapSet.new(ordered_ids)
+    missing_ids = Enum.reject(active_ids, &MapSet.member?(ordered_set, &1))
+
+    visible =
+      (ordered_ids ++ missing_ids)
+      |> Enum.flat_map(fn id ->
+        case Map.fetch(definitions, id) do
+          {:ok, definition} -> [definition]
+          :error -> []
+        end
+      end)
+
+    layer
+    |> Map.put(:defs, Enum.map(visible, & &1.content))
+    |> Map.put(:definitions, Map.new(visible, &{&1.id, &1}))
+    |> Map.put(:definition_order, Enum.map(visible, & &1.id))
+  end
+
+  defp definition_id(definition) do
+    binary = definition |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    case Regex.run(~r/<(?:svg|g|symbol)\s+[^>]*id="([^"]+)"/, binary, capture: :all_but_first) do
+      [id] -> id
+      _other -> nil
+    end
+  rescue
+    _error -> nil
+  end
+
+  defp format_display_tile(%{z: z, x: x, y: y}), do: "#{z}/#{x}/#{y}"
   defp format_source_tile(%{z: z, x: x, y: y}), do: "#{z}/#{x}/#{y}"
+  defp formatted_source_tile(tile) when is_binary(tile), do: tile
+  defp formatted_source_tile(tile), do: format_source_tile(tile)
 
   defp format_number(number) when is_number(number) do
     (number * 1.0)

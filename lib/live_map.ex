@@ -33,6 +33,31 @@ defmodule LiveMap do
   @impl Phoenix.LiveComponent
   @spec update(Phoenix.LiveView.Socket.assigns(), Phoenix.LiveView.Socket.t()) ::
           {:ok, Phoenix.LiveView.Socket.t()}
+  def update(%{tile_layer_result: tile_layer, async_ref: ref}, socket) do
+    if socket.assigns[:async_ref] == ref do
+      {:ok, assign(socket, :tile_layer, tile_layer)}
+    else
+      {:ok, socket}
+    end
+  end
+
+  def update(%{tile_layer_delta: delta, async_ref: ref}, socket) do
+    if socket.assigns[:async_ref] == ref do
+      tile_layer = Tile.merge_vector_delta(socket.assigns.tile_layer, delta)
+      {:ok, assign(socket, :tile_layer, tile_layer)}
+    else
+      {:ok, socket}
+    end
+  end
+
+  def update(%{tile_layer_complete: true, async_ref: ref}, socket) do
+    if socket.assigns[:async_ref] == ref do
+      {:ok, assign(socket, :tile_layer, Tile.complete_vector_layer(socket.assigns.tile_layer))}
+    else
+      {:ok, socket}
+    end
+  end
+
   def update(assigns, socket) do
     merged_assigns =
       socket.assigns
@@ -105,16 +130,13 @@ defmodule LiveMap do
     {:noreply, socket}
   end
 
-  # When no key is sent, it is a click event.
   def handle_event("zoom_in", _params, socket) do
     zoom = socket.assigns[:zoom]
 
     {:noreply,
      socket
      |> assign(:zoom, zoom + 1)
-     |> assign_tiles()
-     |> assign_shape_overlays()
-     |> assign_marker_overlays()}
+     |> assign_prepared_layers()}
   end
 
   # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on the zoom out button.
@@ -132,9 +154,7 @@ defmodule LiveMap do
     {:noreply,
      socket
      |> assign(:zoom, zoom - 1)
-     |> assign_tiles()
-     |> assign_shape_overlays()
-     |> assign_marker_overlays()}
+     |> assign_prepared_layers()}
   end
 
   @doc """
@@ -179,7 +199,65 @@ defmodule LiveMap do
     zoom = parse(assigns[:zoom] || 0, :integer)
     styles = assigns[:styles] || []
     tiles = Tile.map(latitude, longitude, zoom, width, height)
-    tile_layer = Tile.prepare_layer(tiles, assigns[:tile_source], LiveMap.Style.to_css(styles))
+    css = LiveMap.Style.to_css(styles)
+    tile_source = assigns[:tile_source] || Tile.default_source()
+
+    needs_new_layer? =
+      assigns[:tile_layer] == nil or
+        assigns[:tiles] != tiles or
+        assigns[:rendered_tile_source] != tile_source or
+        assigns[:computed_css] != css
+
+    {tile_layer, ref} =
+      if needs_new_layer? do
+        existing_layer = assigns[:tile_layer]
+
+        can_reuse_layer? =
+          existing_layer != nil and assigns[:rendered_tile_source] == tile_source and
+            assigns[:computed_css] == css and assigns[:rendered_zoom] == zoom
+
+        layer_to_diff = if can_reuse_layer?, do: existing_layer, else: %{defs: [], tiles: []}
+
+        layer = Tile.prepare_layer(tiles, tile_source, layer_to_diff)
+        sync? = assigns[:sync] || false
+        new_ref = make_ref()
+
+        layer_result =
+          if layer.source.type == :mvt do
+            if sync? do
+              Tile.fetch_vector_layer(tiles, tile_source, css, layer_to_diff)
+            else
+              pid = self()
+              map_id = assigns[:id] || "live-map"
+
+              if Enum.any?(layer.tiles, &(&1.state == "loading")) do
+                Task.start(fn ->
+                  Tile.stream_vector_layer(tiles, tile_source, css, layer, fn delta ->
+                    Phoenix.LiveView.send_update(pid, LiveMap,
+                      id: map_id,
+                      async_ref: new_ref,
+                      tile_layer_delta: delta
+                    )
+                  end)
+
+                  Phoenix.LiveView.send_update(pid, LiveMap,
+                    id: map_id,
+                    async_ref: new_ref,
+                    tile_layer_complete: true
+                  )
+                end)
+              end
+
+              layer
+            end
+          else
+            layer
+          end
+
+        {Map.take(layer_result, [:defs, :definitions, :definition_order, :tiles]), new_ref}
+      else
+        {assigns[:tile_layer], assigns[:async_ref]}
+      end
 
     center_x = Tile.x(longitude, zoom) * 256.0
     center_y = Tile.y(latitude, zoom) * 256.0
@@ -195,9 +273,13 @@ defmodule LiveMap do
       |> Map.put(:zoom, zoom)
       |> Map.put(:min_x, min_x)
       |> Map.put(:min_y, min_y)
-      |> Map.put(:tile_source, tile_layer.source)
+      |> Map.put(:tile_source, tile_source)
       |> Map.put(:tiles, tiles)
-      |> Map.put(:tile_layer, Map.take(tile_layer, [:defs, :tiles]))
+      |> Map.put(:computed_css, css)
+      |> Map.put(:rendered_tile_source, tile_source)
+      |> Map.put(:rendered_zoom, zoom)
+      |> Map.put(:tile_layer, tile_layer)
+      |> Map.put(:async_ref, ref)
       |> Map.put(:shape_overlays, shape_overlays(%{assigns | zoom: zoom}, min_x, min_y))
       |> Map.put(:marker_overlays, marker_overlays(%{assigns | zoom: zoom}, min_x, min_y))
       |> Map.put(:live_map_prepared, true)
@@ -205,28 +287,13 @@ defmodule LiveMap do
     put_assigns(socket_or_assigns, base_assigns)
   end
 
-  defp assign_tiles(socket) do
-    tiles = tiles(socket.assigns)
-    styles = socket.assigns[:styles] || []
-    tile_layer = Tile.prepare_layer(tiles, socket.assigns[:tile_source], LiveMap.Style.to_css(styles))
-
-    socket
-    |> assign(:tile_source, tile_layer.source)
-    |> assign(:tiles, tiles)
-    |> assign(:tile_layer, Map.take(tile_layer, [:defs, :tiles]))
-    |> assign(:live_map_prepared, true)
-  end
-
-  defp assign_shape_overlays(socket) do
-    assign(socket, :shape_overlays, shape_overlays(socket.assigns, socket.assigns.min_x, socket.assigns.min_y))
-  end
-
-  defp assign_marker_overlays(socket) do
-    assign(socket, :marker_overlays, marker_overlays(socket.assigns, socket.assigns.min_x, socket.assigns.min_y))
-  end
-
-  defp shape_overlays(%{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom} = assigns, min_x, min_y) do
+  defp shape_overlays(
+         %{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom} = assigns,
+         min_x,
+         min_y
+       ) do
     map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
+
     projected_polygons =
       polygons
       |> Enum.with_index()
@@ -238,7 +305,16 @@ defmodule LiveMap do
       polylines
       |> Enum.with_index()
       |> Enum.map(fn {polyline, index} ->
-        Marker.project_shape(:polyline, polyline, map_id, zoom, min_x, min_y, index, map_longitude)
+        Marker.project_shape(
+          :polyline,
+          polyline,
+          map_id,
+          zoom,
+          min_x,
+          min_y,
+          index,
+          map_longitude
+        )
       end)
 
     projected_polygons ++ projected_polylines
@@ -246,6 +322,7 @@ defmodule LiveMap do
 
   defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom} = assigns, min_x, min_y) do
     map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
+
     markers
     |> Enum.with_index()
     |> Enum.map(fn {marker, index} ->
@@ -268,7 +345,10 @@ defmodule LiveMap do
   defp extract_assigns(%Phoenix.LiveView.Socket{assigns: assigns}), do: assigns
   defp extract_assigns(assigns) when is_map(assigns), do: assigns
 
-  defp put_assigns(%Phoenix.LiveView.Socket{} = socket, assigns), do: assign(socket, assigns)
+  defp put_assigns(%Phoenix.LiveView.Socket{} = socket, assigns) do
+    assign(socket, Map.drop(assigns, [:__changed__, :flash, :myself]))
+  end
+
   defp put_assigns(_assigns, prepared_assigns), do: prepared_assigns
 
   @doc """

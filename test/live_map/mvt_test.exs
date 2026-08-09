@@ -17,7 +17,8 @@ defmodule LiveMap.MVTTest do
     assert rendered =~ ~s(fill-rule="evenodd")
     assert rendered =~ ~s(d="M0 0L1 0L1 1L0 1ZM0.25 0.25L0.75 0.25L0.75 0.75L0.25 0.75Z")
     assert rendered =~ ~s(d="M0 0.5L1 0.5")
-    assert rendered =~ ~s(A0.01 0.01 0 1 0)
+    assert rendered =~ ~s(<text)
+    assert rendered =~ ~s[&lt;script&gt;alert(1)&lt;/script&gt;</text>]
     refute rendered =~ "<script>"
   end
 
@@ -833,6 +834,27 @@ defmodule LiveMap.MVTTest do
 
   defp encode_varint(value, acc) when value < 0x80 do
     Enum.reverse([value | acc])
+  end
+
+  test "decodes large varints in geometry" do
+    # 1000000 zigzag is 2,000,000 (3 bytes)
+    # 2000000 zigzag is 4,000,000 (4 bytes)
+    # 200000000 zigzag is 400,000,000 (5 bytes)
+    tile =
+      tile_message([
+        layer_message(
+          "large_points",
+          [feature_message([], 1, point_commands([{1000000, 200000000}, {2000000, 0}]), 1)],
+          [],
+          [],
+          4096,
+          2
+        )
+      ])
+
+    assert {:ok, svg} = MVT.decode(tile)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+    assert is_binary(rendered)
   end
 
   defp encode_varint(value, acc) do

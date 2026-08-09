@@ -144,4 +144,94 @@ defmodule LiveMap.TileTest do
       end
     end)
   end
+
+  describe "fetch_vector_layer/4" do
+    test "delegates raster sources to regular layer preparation" do
+      result =
+        Tile.fetch_vector_layer(
+          [%{x: 1, y: 2, z: 3}],
+          %{type: :raster, url: "https://tiles.example.com/{z}/{x}/{y}.png"},
+          ""
+        )
+
+      assert [%{type: :image, href: "https://tiles.example.com/3/1/2.png"}] = result.tiles
+    end
+
+    test "merges existing_layer tiles" do
+      existing_layer = ready_vector_layer(0, 0, 0)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+      tiles = [LiveMap.Tile.at(0, 0, 0)]
+
+      result = LiveMap.Tile.fetch_vector_layer(tiles, source, "", existing_layer)
+      assert length(result.tiles) == 1
+      assert hd(result.tiles).state == "ready"
+    end
+
+    test "prepares overzoomed source coordinates while loading" do
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt", max_zoom: 1}
+      tiles = [LiveMap.Tile.at(0, 0, 2)]
+
+      result = LiveMap.Tile.prepare_layer(tiles, source)
+
+      assert length(result.tiles) == 1
+      tile = hd(result.tiles)
+      assert tile.state == "loading"
+      assert tile.display_tile == "2/2/2"
+      assert tile.source_tile == "1/1/1"
+    end
+  end
+
+  test "stream_vector_layer rejects raster sources" do
+    source = %{type: :raster, url: "https://tiles.example.com/{z}/{x}/{y}.png"}
+
+    assert_raise ArgumentError, ~r/requires an MVT tile source/, fn ->
+      Tile.stream_vector_layer([], source, "", %{defs: [], tiles: []}, fn _delta -> :ok end)
+    end
+  end
+
+  describe "prepare_layer/3" do
+    test "preserves ready existing layer tiles" do
+      existing_layer = ready_vector_layer(0, 0, 0)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+      tiles = [LiveMap.Tile.at(0, 0, 0)]
+
+      result = LiveMap.Tile.prepare_layer(tiles, source, existing_layer)
+      assert length(result.tiles) == 1
+      assert hd(result.tiles).state == "ready"
+      assert result.defs == existing_layer.defs
+    end
+
+    test "does not reuse the same x/y coordinates from another zoom" do
+      existing_layer = ready_vector_layer(3, 2, 2)
+      source = %{type: :mvt, url: "http://example.com/{z}/{x}/{y}.mvt"}
+
+      result = Tile.prepare_layer([%{z: 2, x: 2, y: 2}], source, existing_layer)
+
+      assert [%{state: "loading", display_tile: "2/2/2", source_tile: "2/2/2"}] =
+               result.tiles
+
+      assert result.defs == []
+    end
+  end
+
+  defp ready_vector_layer(z, x, y) do
+    %{
+      defs: [Phoenix.HTML.raw("<svg id=\"test\"></svg>")],
+      tiles: [
+        %{
+          type: :svg_use,
+          state: "ready",
+          display_tile: "#{z}/#{x}/#{y}",
+          z: z,
+          x: x * 256,
+          y: y * 256,
+          width: 256,
+          height: 256,
+          def_id: "test",
+          view_box: "0 0 1 1",
+          source_tile: "#{z}/#{x}/#{y}"
+        }
+      ]
+    }
+  end
 end

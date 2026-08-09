@@ -36,7 +36,11 @@ defmodule LiveMap.TestTileServer do
     def init(state), do: state
 
     def call(conn, state) do
-      {status, headers, body} = next_response(state, conn)
+      {status, headers, body, delay} = next_response(state, conn)
+
+      if delay > 0 do
+        Process.sleep(delay)
+      end
 
       conn =
         Enum.reduce(headers, conn, fn {name, value}, acc ->
@@ -53,8 +57,8 @@ defmodule LiveMap.TestTileServer do
 
         {response, remaining} =
           case current do
-            [next | rest] -> {next, rest}
-            [] -> {{404, [{"cache-control", "max-age=0"}], "missing"}, []}
+            [next | rest] -> {normalize_response(next), rest}
+            [] -> {{404, [{"cache-control", "max-age=0"}], "missing", 0}, []}
           end
 
         request_entry = %{
@@ -70,6 +74,9 @@ defmodule LiveMap.TestTileServer do
         {response, next_state}
       end)
     end
+
+    defp normalize_response({status, headers, body}), do: {status, headers, body, 0}
+    defp normalize_response({status, headers, body, delay}), do: {status, headers, body, delay}
   end
 
   defp listener_ref do

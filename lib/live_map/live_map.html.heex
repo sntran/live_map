@@ -45,6 +45,7 @@
     <svg
       :for={tile <- @tile_layer.tiles}
       :if={tile.type == :svg_use}
+      id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
       x={tile.x - @min_x}
       y={tile.y - @min_y}
       width={tile.width}
@@ -53,14 +54,22 @@
       preserveAspectRatio="none"
       overflow="hidden"
       data-live-map-tile-state={tile.state}
+      data-live-map-display-tile={tile.display_tile}
       data-live-map-source-tile={tile.source_tile}
     >
-      <use href={"##{tile.def_id}"} x="0" y="0" width="1" height="1" />
+      <%= if tile.state == "loading" do %>
+        <circle cx="128" cy="128" r="16" stroke="#9ca3af" stroke-width="4" fill="none" stroke-dasharray="25 75" stroke-linecap="round">
+          <animateTransform attributeName="transform" type="rotate" from="0 128 128" to="360 128 128" dur="1s" repeatCount="indefinite" />
+        </circle>
+      <% else %>
+        <use href={"##{tile.def_id}"} x="0" y="0" width="1" height="1" />
+      <% end %>
     </svg>
 
     <svg
       :for={tile <- @tile_layer.tiles}
       :if={tile.type == :error}
+      id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
       x={tile.x - @min_x}
       y={tile.y - @min_y}
       width={tile.width}
@@ -69,6 +78,7 @@
       preserveAspectRatio="none"
       overflow="hidden"
       data-live-map-tile-state={tile.state}
+      data-live-map-display-tile={tile.display_tile}
       data-live-map-source-tile={tile.source_tile}
       data-live-map-tile-error-kind={tile.error_kind}
       data-live-map-tile-error-reason={tile.error_reason}

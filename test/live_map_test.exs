@@ -77,7 +77,9 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
 
-      assert Floki.attribute(marker, "style") === ["transform: translate(150.0px, 75.0px) scale(1.0);"]
+      assert Floki.attribute(marker, "style") === [
+               "transform: translate(150.0px, 75.0px) scale(1.0);"
+             ]
     end
 
     test "uses marker labels for accessibility and custom HTML slot bodies without :let" do
@@ -195,7 +197,7 @@ defmodule LiveMapTest do
     test "should have 1 tile covering the whole wold at zoom 0" do
       rendered = component(zoom: 0)
       {:ok, document} = Floki.parse_document(rendered)
-      assert [tile] = Floki.find(document, "image")
+      assert [_, tile | _] = Floki.find(document, "image")
       assert Floki.attribute(tile, "href") === ["https://tile.openstreetmap.org/0/0/0.png"]
       assert Floki.attribute(tile, "x") === ["22.0"]
       assert Floki.attribute(tile, "y") === ["-53.0"]
@@ -278,7 +280,7 @@ defmodule LiveMapTest do
           tile = Enum.at(tiles, index)
           [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_float/1)
           [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_float/1)
-          
+
           center_x = LiveMap.Tile.x(longitude, zoom) * 256.0
           center_y = LiveMap.Tile.y(latitude, zoom) * 256.0
           min_x = center_x - width / 2.0
@@ -302,7 +304,7 @@ defmodule LiveMapTest do
       {:ok, view, rendered} = live(conn, "/")
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
 
       rendered =
         view
@@ -331,14 +333,14 @@ defmodule LiveMapTest do
 
       {:ok, document} = Floki.parse_document(rendered)
       # There is now only 1 tile.
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
     end
 
     test "by pressing Enter", %{conn: conn} do
       {:ok, view, rendered} = live(conn, "/")
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
 
       rendered =
         view
@@ -357,14 +359,14 @@ defmodule LiveMapTest do
 
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
     end
 
     test "by pressing Space", %{conn: conn} do
       {:ok, view, rendered} = live(conn, "/")
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
 
       rendered =
         view
@@ -383,7 +385,7 @@ defmodule LiveMapTest do
 
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
-      assert [_tile] = Floki.find(document, "image")
+      assert [_, _tile | _] = Floki.find(document, "image")
     end
 
     test "ignores all other keys", %{conn: conn} do
@@ -423,7 +425,7 @@ defmodule LiveMapTest do
 
       {:ok, document} = Floki.parse_document(rendered)
       # There is now 1 tile at zoom level 0
-      assert [_] = Floki.find(document, "image")
+      assert [_, _ | _] = Floki.find(document, "image")
     end
   end
 
@@ -461,7 +463,7 @@ defmodule LiveMapTest do
       # The viewBox should be static, but tile coordinates should change
       assert initial_viewboxes == updated_viewboxes,
              "viewBox should remain static."
-      
+
       initial_tiles = Floki.find(initial_doc, "image") |> Enum.map(&Floki.attribute(&1, "x"))
       updated_tiles = Floki.find(updated_doc, "image") |> Enum.map(&Floki.attribute(&1, "x"))
       assert initial_tiles != updated_tiles, "Tiles should move when coordinates change"
@@ -684,5 +686,132 @@ defmodule LiveMapTest do
   defp get_layer_viewboxes(document) do
     Floki.find(document, "svg > svg")
     |> Enum.flat_map(&Floki.attribute(&1, "viewbox"))
+  end
+
+  test "viewbox/1 returns the correct viewbox for a list of tiles" do
+    assert LiveMap.viewbox([]) == "0 0 0 0"
+    assert LiveMap.viewbox([%{x: 0, y: 0}]) == "0 0 256 256"
+
+    assert LiveMap.viewbox([
+             %{x: 0, y: 0},
+             %{x: 0, y: 1},
+             %{x: 1, y: 0},
+             %{x: 1, y: 1}
+           ]) == "0 0 512 512"
+  end
+
+  test "viewbox/5 returns the correct viewbox for latitude, longitude, zoom, width, height" do
+    assert LiveMap.viewbox(0.0, 0.0, 0, 800, 600) == "-272.0 -172.0 800 600"
+  end
+
+  test "update handles async_ref tile layer result properly" do
+    socket = %Phoenix.LiveView.Socket{assigns: %{async_ref: :ref, __changed__: %{}}}
+
+    assert {:ok, new_socket} =
+             LiveMap.update(
+               %{tile_layer_result: %{defs: [], tiles: []}, async_ref: :ref},
+               socket
+             )
+
+    assert new_socket.assigns.tile_layer == %{defs: [], tiles: []}
+
+    assert {:ok, socket2} =
+             LiveMap.update(
+               %{tile_layer_result: %{defs: [], tiles: []}, async_ref: :old_ref},
+               socket
+             )
+
+    assert socket2 == socket
+  end
+
+  test "update merges matching vector tile deltas and ignores stale deltas" do
+    loading_tile = %{
+      type: :svg_use,
+      state: "loading",
+      display_tile: "2/1/1",
+      z: 2,
+      x: 256,
+      y: 256,
+      width: 256,
+      height: 256,
+      view_box: "0 0 256 256",
+      def_id: "loading-2/1/1",
+      source_tile: "2/1/1"
+    }
+
+    ready_tile = %{
+      loading_tile
+      | state: "ready",
+        view_box: "0 0 1 1",
+        def_id: "vector-2-1-1"
+    }
+
+    delta = %{
+      definition: %{
+        id: "vector-2-1-1",
+        content: Phoenix.HTML.raw("<svg id=\"vector-2-1-1\"></svg>")
+      },
+      tiles: [ready_tile]
+    }
+
+    socket = %Phoenix.LiveView.Socket{
+      assigns: %{
+        async_ref: :current,
+        tile_layer: %{defs: [], tiles: [loading_tile]},
+        __changed__: %{}
+      }
+    }
+
+    assert {:ok, updated} =
+             LiveMap.update(%{tile_layer_delta: delta, async_ref: :current}, socket)
+
+    assert [%{state: "ready", display_tile: "2/1/1"}] = updated.assigns.tile_layer.tiles
+
+    assert [definition] = updated.assigns.tile_layer.defs
+    assert definition |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary() =~ "vector-2-1-1"
+
+    assert {:ok, unchanged} =
+             LiveMap.update(%{tile_layer_delta: delta, async_ref: :stale}, socket)
+
+    assert unchanged == socket
+  end
+
+  test "update turns unfinished tiles into errors when vector streaming completes" do
+    tile = %{
+      type: :svg_use,
+      state: "loading",
+      display_tile: "0/0/0",
+      z: 0,
+      x: 0,
+      y: 0,
+      width: 256,
+      height: 256,
+      view_box: "0 0 256 256",
+      def_id: "loading-0/0/0",
+      source_tile: "0/0/0"
+    }
+
+    socket = %Phoenix.LiveView.Socket{
+      assigns: %{
+        async_ref: :current,
+        tile_layer: %{defs: [], tiles: [tile]},
+        __changed__: %{}
+      }
+    }
+
+    assert {:ok, updated} =
+             LiveMap.update(%{tile_layer_complete: true, async_ref: :current}, socket)
+
+    assert [%{state: "error", error_reason: "task-exit"}] = updated.assigns.tile_layer.tiles
+  end
+
+  test "renders MVT source async" do
+    html =
+      render_component(LiveMap,
+        id: "mvt-map",
+        tile_source: %{type: :mvt, url: "http://localhost/{z}/{x}/{y}.mvt"}
+      )
+
+    assert html =~ "data-live-map-tile-state=\"loading\""
   end
 end

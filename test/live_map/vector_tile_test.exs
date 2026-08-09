@@ -7,8 +7,10 @@ defmodule LiveMap.VectorTileTest do
 
   setup do
     original_user_agent = Application.get_env(:live_map, :tile_user_agent)
+    original_concurrency = Application.get_env(:live_map, :vector_tile_concurrency)
 
     server = LiveMap.TestTileServer.start_link()
+    Application.put_env(:live_map, :vector_tile_concurrency, 2)
 
     on_exit(fn ->
       LiveMap.TestTileServer.stop(server)
@@ -16,6 +18,10 @@ defmodule LiveMap.VectorTileTest do
       if is_nil(original_user_agent),
         do: Application.delete_env(:live_map, :tile_user_agent),
         else: Application.put_env(:live_map, :tile_user_agent, original_user_agent)
+
+      if is_nil(original_concurrency),
+        do: Application.delete_env(:live_map, :vector_tile_concurrency),
+        else: Application.put_env(:live_map, :vector_tile_concurrency, original_concurrency)
     end)
 
     %{server: server}
@@ -34,6 +40,7 @@ defmodule LiveMap.VectorTileTest do
         latitude: 0,
         longitude: 0,
         zoom: 0,
+        sync: true,
         tile_source: %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
       )
 
@@ -57,6 +64,7 @@ defmodule LiveMap.VectorTileTest do
         latitude: 0,
         longitude: 0,
         zoom: 0,
+        sync: true,
         tile_source: %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
       )
 
@@ -76,7 +84,7 @@ defmodule LiveMap.VectorTileTest do
     ])
 
     layer =
-      Tile.prepare_layer([%{x: 0, y: 0, z: 0}], %{url: server.base_url <> "/{z}/{x}/{y}.mvt"})
+      Tile.fetch_vector_layer([%{x: 0, y: 0, z: 0}], %{url: server.base_url <> "/{z}/{x}/{y}.mvt"})
 
     assert [%{type: :error, error_kind: "decode", error_reason: "unsupported-geometry-type-4"}] =
              layer.tiles
@@ -87,7 +95,7 @@ defmodule LiveMap.VectorTileTest do
     url = server.base_url
     LiveMap.TestTileServer.stop(server)
 
-    layer = Tile.prepare_layer([%{x: 0, y: 0, z: 0}], %{url: url <> "/{z}/{x}/{y}.mvt"})
+    layer = Tile.fetch_vector_layer([%{x: 0, y: 0, z: 0}], %{url: url <> "/{z}/{x}/{y}.mvt"})
 
     assert [%{type: :error, error_kind: "fetch", error_reason: "econnrefused"}] = layer.tiles
   end
@@ -98,7 +106,7 @@ defmodule LiveMap.VectorTileTest do
     ])
 
     layer =
-      Tile.prepare_layer(
+      Tile.fetch_vector_layer(
         [
           %{x: 0, y: 0, z: 15},
           %{x: 1, y: 0, z: 15}
@@ -119,6 +127,61 @@ defmodule LiveMap.VectorTileTest do
     assert LiveMap.TestTileServer.request_count(server, "/14/0/0.mvt") === 1
   end
 
+  test "fetches a new source tile when display coordinates collide across zooms", %{
+    server: server
+  } do
+    LiveMap.TestTileServer.put_responses(server, "/3/2/2.mvt", [
+      {200, [{"cache-control", "max-age=60"}], shortbread_tile()}
+    ])
+
+    LiveMap.TestTileServer.put_responses(server, "/2/2/2.mvt", [
+      {200, [{"cache-control", "max-age=60"}], shortbread_tile()}
+    ])
+
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
+    zoom_three = Tile.fetch_vector_layer([%{x: 2, y: 2, z: 3}], source)
+    zoom_two = Tile.fetch_vector_layer([%{x: 2, y: 2, z: 2}], source, "", zoom_three)
+
+    assert [%{display_tile: "2/2/2", source_tile: "2/2/2", state: "ready"}] =
+             zoom_two.tiles
+
+    assert LiveMap.TestTileServer.request_count(server, "/3/2/2.mvt") === 1
+    assert LiveMap.TestTileServer.request_count(server, "/2/2/2.mvt") === 1
+  end
+
+  test "streams each vector source tile as soon as it is decoded", %{server: server} do
+    LiveMap.TestTileServer.put_responses(server, "/1/0/0.mvt", [
+      {200, [{"cache-control", "max-age=60"}], shortbread_tile()}
+    ])
+
+    LiveMap.TestTileServer.put_responses(server, "/1/1/0.mvt", [
+      {200, [{"cache-control", "max-age=60"}], shortbread_tile(), 800}
+    ])
+
+    tiles = [%{x: 0, y: 0, z: 1}, %{x: 1, y: 0, z: 1}]
+    source = %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
+    prepared_layer = Tile.prepare_layer(tiles, source)
+    parent = self()
+
+    Task.start(fn ->
+      Tile.stream_vector_layer(tiles, source, "", prepared_layer, fn delta ->
+        send(parent, {:tile_delta, delta})
+      end)
+
+      send(parent, :stream_complete)
+    end)
+
+    assert_receive {:tile_delta, %{tiles: [%{source_tile: "1/0/0", state: "ready"}]}},
+                   600
+
+    refute_received :stream_complete
+
+    assert_receive {:tile_delta, %{tiles: [%{source_tile: "1/1/0", state: "ready"}]}},
+                   1_000
+
+    assert_receive :stream_complete
+  end
+
   test "direct render waits for vector preparation", %{server: server} do
     LiveMap.TestTileServer.put_responses(server, "/0/0/0.mvt", [
       {200, [{"cache-control", "max-age=60"}], shortbread_tile()}
@@ -132,6 +195,7 @@ defmodule LiveMap.VectorTileTest do
         latitude: 0,
         longitude: 0,
         zoom: 0,
+        sync: true,
         tile_source: %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
       }
       |> LiveMap.render()
@@ -156,6 +220,7 @@ defmodule LiveMap.VectorTileTest do
       latitude: 0,
       longitude: 0,
       zoom: 0,
+      sync: true,
       tile_source: %{url: server.base_url <> "/{z}/{x}/{y}.mvt"}
     )
 

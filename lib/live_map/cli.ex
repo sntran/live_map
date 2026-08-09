@@ -54,6 +54,7 @@ defmodule LiveMap.CLI do
       |> Keyword.drop([:tile_url, :tile_format, :tile_version, :tile_user_agent])
       |> Enum.into(@defaults)
       |> Map.put(:tile_source, build_tile_source(opts))
+      |> Map.put(:sync, true)
 
     assigns
     |> LiveMap.render()

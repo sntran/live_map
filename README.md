@@ -186,6 +186,14 @@ config :live_map, :tile_user_agent,
 
 Per-source headers are optional and are merged with that default.
 
+Live components publish each decoded vector source tile as soon as it is ready.
+Concurrent fetch/decode work defaults to the smaller of eight tasks or the
+number of online schedulers, and can be tuned for the tile service and host:
+
+```elixir
+config :live_map, :vector_tile_concurrency, 4
+```
+
 ## CLI
 
 The escript still renders raster output by default:
