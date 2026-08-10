@@ -8,6 +8,8 @@ defmodule LiveMapTest do
   import Phoenix.LiveViewTest
   @endpoint LiveMapTestApp.Endpoint
 
+  alias LiveMap.Tile
+
   describe "component" do
     test "renders component as an SVG" do
       assert component() =~ "</svg>"
@@ -45,13 +47,93 @@ defmodule LiveMapTest do
       assert component(title: "Awesome Live Map") =~ "<title>Awesome Live Map</title>"
     end
 
-    test "renders custom HTML zoom controls through explicit zoom slots" do
-      rendered = component_with_zoom_controls()
+    test "renders custom HTML through unified map control slots" do
+      rendered = component_with_map_controls()
 
       {:ok, document} = Floki.parse_document(rendered)
 
-      assert [_zoom_in] = Floki.find(document, "[data-zoom-control='in']")
-      assert [_zoom_out] = Floki.find(document, "[data-zoom-control='out']")
+      for action <- ~w(pan-up pan-left pan-right pan-down zoom-in zoom-out) do
+        assert [control] = Floki.find(document, "[data-live-map-control='#{action}']")
+        assert [_body] = Floki.find(document, "[data-map-control-body='#{action}']")
+        assert Floki.attribute(control, "aria-label") === [map_control_label(action)]
+      end
+
+      [pan_right] = Floki.find(document, "[data-live-map-control='pan-right']")
+      assert Floki.attribute(pan_right, "data-live-map-control-step") === ["2"]
+    end
+
+    test "lays out pan controls as a D-pad with a compact zoom stack" do
+      {:ok, document} = component_with_map_controls() |> Floki.parse_document()
+      [group] = Floki.find(document, "g.live-map-controls")
+
+      assert Floki.attribute(group, "transform") === ["translate(212,14)"]
+
+      expected_positions = %{
+        "pan-up" => "translate(24,0)",
+        "pan-left" => "translate(0,24)",
+        "pan-right" => "translate(48,24)",
+        "pan-down" => "translate(24,48)",
+        "zoom-in" => "translate(24,72)",
+        "zoom-out" => "translate(24,96)"
+      }
+
+      for {action, transform} <- expected_positions do
+        [control] = Floki.find(group, "[data-live-map-control='#{action}']")
+        assert Floki.attribute(control, "transform") === [transform]
+      end
+    end
+
+    test "keeps zoom-only controls in the existing narrow bottom-right position" do
+      {:ok, document} = component_with_zoom_only_controls() |> Floki.parse_document()
+      [group] = Floki.find(document, "g.live-map-controls")
+
+      assert Floki.attribute(group, "transform") === ["translate(260,86)"]
+
+      assert Floki.attribute(
+               hd(Floki.find(group, "[data-live-map-control='zoom-in']")),
+               "transform"
+             ) === [
+               "translate(0,0)"
+             ]
+
+      assert Floki.attribute(
+               hd(Floki.find(group, "[data-live-map-control='zoom-out']")),
+               "transform"
+             ) === [
+               "translate(0,24)"
+             ]
+    end
+
+    test "supports deprecated zoom slots and lets matching map controls take precedence" do
+      rendered = component_with_legacy_zoom_controls()
+      {:ok, document} = Floki.parse_document(rendered)
+
+      assert [_new_zoom_in] = Floki.find(document, "[data-map-control-body='new-zoom-in']")
+
+      assert [_legacy_zoom_out] =
+               Floki.find(document, "[data-map-control-body='legacy-zoom-out']")
+
+      assert Floki.find(document, "[data-map-control-body='legacy-zoom-in']") === []
+    end
+
+    test "rejects invalid and duplicate map control declarations" do
+      assert_raise ArgumentError, ~r/map_control action must be one of/, fn ->
+        LiveMap.render(%{id: "map", map_control: [%{action: "rotate-left", step: 1}]})
+      end
+
+      assert_raise ArgumentError, ~r/map_control step must be a positive integer/, fn ->
+        LiveMap.render(%{id: "map", map_control: [%{action: "zoom-in", step: 0}]})
+      end
+
+      assert_raise ArgumentError, ~r/duplicate map_control action: "zoom-in"/, fn ->
+        LiveMap.render(%{
+          id: "map",
+          map_control: [
+            %{action: "zoom-in", step: 1},
+            %{action: "zoom-in", step: 2}
+          ]
+        })
+      end
     end
 
     test "renders markers inside a dedicated marker layer" do
@@ -360,7 +442,7 @@ defmodule LiveMapTest do
     end
   end
 
-  describe "zoom" do
+  describe "map controls" do
     setup do
       [conn: Phoenix.ConnTest.build_conn()]
     end
@@ -399,6 +481,32 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       # There is now only 1 tile.
       assert [_, _tile | _] = Floki.find(document, "image")
+    end
+
+    test "pans by clicking a directional control", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      {:ok, initial_document} = Floki.parse_document(rendered)
+
+      initial_x =
+        initial_document
+        |> Floki.find("image")
+        |> hd()
+        |> Floki.attribute("x")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Pan Right\"]")
+        |> render_click()
+
+      {:ok, updated_document} = Floki.parse_document(rendered)
+
+      updated_x =
+        updated_document
+        |> Floki.find("image")
+        |> hd()
+        |> Floki.attribute("x")
+
+      refute updated_x === initial_x
     end
 
     test "by pressing Enter", %{conn: conn} do
@@ -491,6 +599,218 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       # There is now 1 tile at zoom level 0
       assert [_, _ | _] = Floki.find(document, "image")
+    end
+
+    test "uses the server-owned step for zoom and clamps at zero" do
+      socket = prepared_map_socket(zoom: 1, map_control: [%{action: "zoom-in", step: 2}])
+
+      assert {:noreply, zoomed_in} =
+               LiveMap.handle_event("map_control", %{"action" => "zoom-in"}, socket)
+
+      assert zoomed_in.assigns.zoom === 3
+
+      socket = prepared_map_socket(zoom: 1, map_control: [%{action: "zoom-out", step: 2}])
+
+      assert {:noreply, zoomed_out} =
+               LiveMap.handle_event("map_control", %{"action" => "zoom-out"}, socket)
+
+      assert zoomed_out.assigns.zoom === 0
+    end
+
+    test "defaults step to one and ignores unknown or tampered actions" do
+      socket = prepared_map_socket(zoom: 1, map_control: [%{action: "zoom-in"}])
+
+      assert {:noreply, zoomed} =
+               LiveMap.handle_event("map_control", %{"action" => "zoom-in"}, socket)
+
+      assert zoomed.assigns.zoom === 2
+
+      assert {:noreply, unchanged} =
+               LiveMap.handle_event("map_control", %{"action" => "pan-right"}, socket)
+
+      assert unchanged === socket
+
+      assert {:noreply, unchanged} = LiveMap.handle_event("map_control", %{}, socket)
+      assert unchanged === socket
+    end
+
+    test "reports control-driven bounds changes through the server callback" do
+      test_pid = self()
+
+      socket =
+        prepared_map_socket(
+          width: 512,
+          zoom: 2,
+          map_control: [%{action: "pan-right"}],
+          on_bounds_changed: fn view -> send(test_pid, {:bounds_changed, view}) end
+        )
+
+      assert {:noreply, _updated} =
+               LiveMap.handle_event("map_control", %{"action" => "pan-right"}, socket)
+
+      assert_receive {:bounds_changed,
+                      %{
+                        action: "pan-right",
+                        center: {latitude, longitude},
+                        id: "live-map",
+                        zoom: 2
+                      }}
+
+      assert_in_delta latitude, 0.0, 1.0e-10
+      assert_in_delta longitude, 90.0, 1.0e-10
+    end
+
+    test "does not report unchanged views and rejects an invalid callback" do
+      test_pid = self()
+
+      socket =
+        prepared_map_socket(
+          zoom: 0,
+          map_control: [%{action: "zoom-out"}],
+          on_bounds_changed: fn view -> send(test_pid, {:bounds_changed, view}) end
+        )
+
+      assert {:noreply, unchanged} =
+               LiveMap.handle_event("map_control", %{"action" => "zoom-out"}, socket)
+
+      assert unchanged === socket
+      refute_receive {:bounds_changed, _view}
+
+      invalid =
+        prepared_map_socket(
+          map_control: [%{action: "zoom-in"}],
+          on_bounds_changed: :invalid
+        )
+
+      assert_raise ArgumentError, ~r/on_bounds_changed must be a function/, fn ->
+        LiveMap.handle_event("map_control", %{"action" => "zoom-in"}, invalid)
+      end
+    end
+
+    test "accepts legacy Spacebar and ignores non-activation keys before dispatch" do
+      socket = prepared_map_socket(zoom: 1, map_control: [%{action: "zoom-in", step: 2}])
+
+      assert {:noreply, zoomed} =
+               LiveMap.handle_event(
+                 "map_control",
+                 %{"action" => "zoom-in", "key" => "Spacebar"},
+                 socket
+               )
+
+      assert zoomed.assigns.zoom === 3
+
+      assert {:noreply, unchanged} =
+               LiveMap.handle_event(
+                 "map_control",
+                 %{"action" => "zoom-in", "key" => "ArrowUp"},
+                 socket
+               )
+
+      assert unchanged === socket
+    end
+
+    test "pans one half-viewport step in every direction" do
+      expected = %{
+        "pan-up" => {Tile.latitude(1.5, 2), 0.0},
+        "pan-right" => {0.0, 90.0},
+        "pan-down" => {Tile.latitude(2.5, 2), 0.0},
+        "pan-left" => {0.0, -90.0}
+      }
+
+      for {action, {expected_latitude, expected_longitude}} <- expected do
+        socket =
+          prepared_map_socket(
+            width: 512,
+            height: 256,
+            zoom: 2,
+            map_control: [%{action: action}]
+          )
+
+        assert {:noreply, updated} =
+                 LiveMap.handle_event("map_control", %{"action" => action}, socket)
+
+        assert_in_delta updated.assigns.latitude, expected_latitude, 1.0e-10
+        assert_in_delta updated.assigns.longitude, expected_longitude, 1.0e-10
+      end
+    end
+
+    test "multiplies pan distance by step at the current viewport and zoom" do
+      socket =
+        prepared_map_socket(
+          width: 300,
+          height: 200,
+          zoom: 3,
+          map_control: [%{action: "pan-right", step: 2}]
+        )
+
+      assert {:noreply, updated} =
+               LiveMap.handle_event("map_control", %{"action" => "pan-right"}, socket)
+
+      expected_x = Tile.x(0.0, 3) + 2 * (300 / 2.0) / 256.0
+      assert_in_delta updated.assigns.longitude, Tile.longitude(expected_x, 3), 1.0e-10
+    end
+
+    test "wraps horizontally and clamps vertical panning to Web Mercator" do
+      horizontal =
+        prepared_map_socket(
+          center: {0, 170},
+          width: 512,
+          zoom: 2,
+          map_control: [%{action: "pan-right"}]
+        )
+
+      assert {:noreply, wrapped} =
+               LiveMap.handle_event("map_control", %{"action" => "pan-right"}, horizontal)
+
+      assert_in_delta wrapped.assigns.longitude, 260.0, 1.0e-10
+
+      for {action, expected_latitude} <- [
+            {"pan-up", Tile.latitude(0, 0)},
+            {"pan-down", Tile.latitude(1, 0)}
+          ] do
+        vertical =
+          prepared_map_socket(
+            height: 1024,
+            zoom: 0,
+            map_control: [%{action: action, step: 2}]
+          )
+
+        assert {:noreply, clamped} =
+                 LiveMap.handle_event("map_control", %{"action" => action}, vertical)
+
+        assert_in_delta clamped.assigns.latitude, expected_latitude, 1.0e-10
+      end
+    end
+
+    test "reprojects markers and shapes after panning" do
+      socket =
+        prepared_map_socket(
+          width: 512,
+          height: 256,
+          zoom: 2,
+          map_control: [%{action: "pan-right"}],
+          marker: [%{id: "center", position: {0, 0}, title: "Center"}],
+          polyline: [%{id: "line", points: [%{latitude: 0, longitude: 0}]}],
+          polygon: [%{id: "area", points: [%{latitude: 0, longitude: 0}]}]
+        )
+
+      assert [%{x: 256.0}] = socket.assigns.marker_overlays
+
+      assert Enum.all?(socket.assigns.shape_overlays, fn shape ->
+               shape.points == [{256.0, 128.0}]
+             end)
+
+      assert {:noreply, updated} =
+               LiveMap.handle_event("map_control", %{"action" => "pan-right"}, socket)
+
+      assert [%{x: marker_x}] = updated.assigns.marker_overlays
+      assert_in_delta marker_x, 0.0, 1.0e-10
+
+      assert Enum.all?(updated.assigns.shape_overlays, fn shape ->
+               shape.points == [{0.0, 128.0}]
+             end)
+
+      refute updated.assigns.tiles === socket.assigns.tiles
     end
   end
 
@@ -655,6 +975,12 @@ defmodule LiveMapTest do
     render_component(LiveMap, assigns)
   end
 
+  defp map_control_label(action) do
+    action
+    |> String.split("-")
+    |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
   defp component_with_markers(markers, assigns \\ []) do
     defaults = %{
       id: "live-map",
@@ -715,23 +1041,94 @@ defmodule LiveMapTest do
     )
   end
 
-  defp component_with_zoom_controls(assigns \\ %{}) do
+  defp component_with_map_controls(assigns \\ %{}) do
     render_component(
       fn assigns ->
         ~H"""
         <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
-          <:zoom_in>
-            <span data-zoom-control="in">+</span>
-          </:zoom_in>
+          <:map_control action="pan-up">
+            <span data-map-control-body="pan-up">↑</span>
+          </:map_control>
 
-          <:zoom_out>
-            <span data-zoom-control="out">-</span>
-          </:zoom_out>
+          <:map_control action="pan-left">
+            <span data-map-control-body="pan-left">←</span>
+          </:map_control>
+
+          <:map_control action="pan-right" step={2}>
+            <span data-map-control-body="pan-right">→</span>
+          </:map_control>
+
+          <:map_control action="pan-down">
+            <span data-map-control-body="pan-down">↓</span>
+          </:map_control>
+
+          <:map_control action="zoom-in">
+            <span data-map-control-body="zoom-in">+</span>
+          </:map_control>
+
+          <:map_control action="zoom-out">
+            <span data-map-control-body="zoom-out">-</span>
+          </:map_control>
         </.live_component>
         """
       end,
       assigns
     )
+  end
+
+  defp component_with_zoom_only_controls(assigns \\ %{}) do
+    render_component(
+      fn assigns ->
+        ~H"""
+        <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
+          <:map_control action="zoom-in">+</:map_control>
+          <:map_control action="zoom-out">-</:map_control>
+        </.live_component>
+        """
+      end,
+      assigns
+    )
+  end
+
+  defp component_with_legacy_zoom_controls(assigns \\ %{}) do
+    render_component(
+      fn assigns ->
+        ~H"""
+        <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
+          <:zoom_in>
+            <span data-map-control-body="legacy-zoom-in">+</span>
+          </:zoom_in>
+
+          <:zoom_out>
+            <span data-map-control-body="legacy-zoom-out">-</span>
+          </:zoom_out>
+
+          <:map_control action="zoom-in">
+            <span data-map-control-body="new-zoom-in">New +</span>
+          </:map_control>
+        </.live_component>
+        """
+      end,
+      assigns
+    )
+  end
+
+  defp prepared_map_socket(assigns) do
+    defaults = %{
+      id: "live-map",
+      width: 300,
+      height: 150,
+      center: {0, 0},
+      zoom: 0,
+      map_control: [],
+      marker: [],
+      polyline: [],
+      polygon: []
+    }
+
+    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+    {:ok, socket} = LiveMap.update(Map.merge(defaults, Map.new(assigns)), socket)
+    socket
   end
 
   defp component_with_shapes(polylines, assigns \\ []) do
@@ -955,6 +1352,7 @@ defmodule LiveMapTest do
         min_x: 256,
         min_y: 256,
         style: [],
+        map_controls: [],
         zoom_in: [],
         zoom_out: [],
         myself: nil,

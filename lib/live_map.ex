@@ -11,6 +11,10 @@ defmodule LiveMap do
   alias LiveMap.Marker
   alias LiveMap.Tile
 
+  @map_control_actions ~w(pan-up pan-left pan-right pan-down zoom-in zoom-out)
+  @pan_control_actions ~w(pan-up pan-left pan-right pan-down)
+  @zoom_control_actions ~w(zoom-in zoom-out)
+
   @doc deletegate_to: {Tile, :map, 5}
   defdelegate tiles(latitude, longitude, zoom, width, height), to: Tile, as: :map
 
@@ -24,6 +28,8 @@ defmodule LiveMap do
      |> assign_new(:title, fn -> "" end)
      |> assign_new(:style, fn -> [] end)
      |> assign_new(:zoom, fn -> 0 end)
+     |> assign_new(:on_bounds_changed, fn -> nil end)
+     |> assign_new(:map_control, fn -> [] end)
      |> assign_new(:zoom_in, fn -> [] end)
      |> assign_new(:zoom_out, fn -> [] end)
      |> assign_new(:polyline, fn -> [] end)
@@ -99,6 +105,12 @@ defmodule LiveMap do
   attr(:latitude, :any, default: nil, doc: "Deprecated; use center instead")
   attr(:longitude, :any, default: nil, doc: "Deprecated; use center instead")
   attr(:zoom, :any, default: 0)
+
+  attr(:on_bounds_changed, :any,
+    default: nil,
+    doc: "Server callback for control-driven map bounds changes"
+  )
+
   attr(:styles, :list, default: [])
 
   attr(:"rendering-type", :string,
@@ -112,8 +124,14 @@ defmodule LiveMap do
   attr(:shape_overlays, :list, default: [])
   attr(:marker_overlays, :list, default: [])
   slot(:style)
-  slot(:zoom_in)
-  slot(:zoom_out)
+
+  slot :map_control do
+    attr(:action, :string, required: true, values: @map_control_actions)
+    attr(:step, :integer)
+  end
+
+  slot(:zoom_in, doc: "Deprecated; use map_control with action=\"zoom-in\"")
+  slot(:zoom_out, doc: "Deprecated; use map_control with action=\"zoom-out\"")
 
   slot :polyline do
     attr(:id, :any)
@@ -152,39 +170,99 @@ defmodule LiveMap do
   @impl Phoenix.LiveComponent
   @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on the zoom in button.
+  # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on map controls.
   # Notes that we accept both `" "` and `"Spacebar"` since older browsers send that,
   # including Firefox < 37 and Internet Explorer 9, 10, and 11.
-  def handle_event("zoom_in", %{"key" => key}, socket)
+  def handle_event("map_control", %{"key" => key}, socket)
       when key not in ["Enter", " ", "Spacebar"] do
     {:noreply, socket}
   end
 
-  def handle_event("zoom_in", _params, socket) do
-    zoom = socket.assigns[:zoom]
-
-    {:noreply,
-     socket
-     |> assign(:zoom, zoom + 1)
-     |> assign_prepared_layers()}
+  def handle_event("map_control", %{"action" => action}, socket) do
+    case Enum.find(socket.assigns[:map_controls] || [], &(&1.action == action)) do
+      nil -> {:noreply, socket}
+      control -> apply_map_control(socket, control)
+    end
   end
 
-  # Only handles <kbd>Enter</kbd> and <kbd>Space Bar</kbd> on the zoom out button.
-  # Notes that we accept both `" "` and `"Spacebar"` since older browsers send that,
-  # including Firefox < 37 and Internet Explorer 9, 10, and 11.
-  def handle_event("zoom_out", %{"key" => key}, socket)
-      when key not in ["Enter", " ", "Spacebar"] do
-    {:noreply, socket}
+  def handle_event("map_control", _params, socket), do: {:noreply, socket}
+
+  defp apply_map_control(socket, %{action: action, step: step})
+       when action in @zoom_control_actions do
+    zoom = parse(socket.assigns[:zoom] || 0, :integer)
+    change = if action == "zoom-in", do: step, else: -step
+    next_zoom = max(zoom + change, 0)
+
+    if next_zoom == zoom do
+      {:noreply, socket}
+    else
+      updated_socket =
+        socket
+        |> assign(:zoom, next_zoom)
+        |> assign_prepared_layers()
+
+      notify_bounds_changed(updated_socket, action)
+      {:noreply, updated_socket}
+    end
   end
 
-  # When no key is sent, it is a click event.
-  def handle_event("zoom_out", _params, socket) do
-    zoom = socket.assigns[:zoom]
+  defp apply_map_control(socket, %{action: action, step: step})
+       when action in @pan_control_actions do
+    assigns = socket.assigns
+    zoom = parse(assigns[:zoom] || 0, :integer)
+    width = parse(assigns[:width], :integer)
+    height = parse(assigns[:height], :integer)
+    {latitude, longitude} = center(assigns)
+    center_x = Tile.x(longitude, zoom)
+    center_y = Tile.y(latitude, zoom)
 
-    {:noreply,
-     socket
-     |> assign(:zoom, zoom - 1)
-     |> assign_prepared_layers()}
+    pixel_distance =
+      if action in ["pan-left", "pan-right"], do: width / 2.0, else: height / 2.0
+
+    world_distance = step * pixel_distance / 256.0
+
+    {next_x, next_y} =
+      case action do
+        "pan-up" -> {center_x, center_y - world_distance}
+        "pan-right" -> {center_x + world_distance, center_y}
+        "pan-down" -> {center_x, center_y + world_distance}
+        "pan-left" -> {center_x - world_distance, center_y}
+      end
+
+    world_size = Integer.pow(2, zoom)
+    next_y = next_y |> max(0.0) |> min(world_size * 1.0)
+    next_center = {Tile.latitude(next_y, zoom), Tile.longitude(next_x, zoom)}
+
+    if next_center == {latitude, longitude} do
+      {:noreply, socket}
+    else
+      updated_socket =
+        socket
+        |> assign(:center, next_center)
+        |> assign_prepared_layers()
+
+      notify_bounds_changed(updated_socket, action)
+      {:noreply, updated_socket}
+    end
+  end
+
+  defp notify_bounds_changed(socket, action) do
+    case socket.assigns[:on_bounds_changed] do
+      callback when is_function(callback, 1) ->
+        callback.(%{
+          action: action,
+          center: {socket.assigns.latitude, socket.assigns.longitude},
+          id: socket.assigns.id,
+          zoom: socket.assigns.zoom
+        })
+
+      nil ->
+        :ok
+
+      callback ->
+        raise ArgumentError,
+              "on_bounds_changed must be a function accepting one argument; got: #{inspect(callback)}"
+    end
   end
 
   @doc """
@@ -199,6 +277,107 @@ defmodule LiveMap do
       }),
       do: Tile.map(latitude, longitude, zoom, width, height)
 
+  defp assign_map_controls(assigns) do
+    controls_by_action =
+      assigns
+      |> Map.get(:map_control, [])
+      |> List.wrap()
+      |> Enum.reduce(%{}, fn control, controls ->
+        action = Map.get(control, :action)
+        step = Map.get(control, :step, 1)
+        validate_map_control!(action, step, controls)
+
+        Map.put(controls, action, %{
+          action: action,
+          label: map_control_label(action),
+          slot: control,
+          step: step
+        })
+      end)
+      |> put_legacy_control("zoom-in", Map.get(assigns, :zoom_in, []))
+      |> put_legacy_control("zoom-out", Map.get(assigns, :zoom_out, []))
+
+    pan_controls =
+      @pan_control_actions
+      |> Enum.flat_map(fn action ->
+        case Map.get(controls_by_action, action) do
+          nil -> []
+          control -> [Map.merge(control, pan_control_position(action))]
+        end
+      end)
+
+    pan_controls? = pan_controls != []
+    zoom_x = if pan_controls?, do: 24, else: 0
+    zoom_y = if pan_controls?, do: 72, else: 0
+
+    zoom_controls =
+      @zoom_control_actions
+      |> Enum.flat_map(fn action ->
+        case Map.get(controls_by_action, action) do
+          nil -> []
+          control -> [control]
+        end
+      end)
+      |> Enum.with_index()
+      |> Enum.map(fn {control, index} ->
+        Map.merge(control, %{x: zoom_x, y: zoom_y + index * 24})
+      end)
+
+    controls = pan_controls ++ zoom_controls
+    control_width = if pan_controls?, do: 72, else: if(zoom_controls == [], do: 0, else: 24)
+
+    control_height =
+      if pan_controls?, do: 72 + length(zoom_controls) * 24, else: length(zoom_controls) * 24
+
+    assigns
+    |> Map.put(:map_controls, controls)
+    |> Map.put(:map_control_width, control_width)
+    |> Map.put(:map_control_height, control_height)
+  end
+
+  defp validate_map_control!(action, step, controls) do
+    unless action in @map_control_actions do
+      raise ArgumentError,
+            "map_control action must be one of #{Enum.join(@map_control_actions, ", ")}; " <>
+              "got: #{inspect(action)}"
+    end
+
+    unless is_integer(step) and step > 0 do
+      raise ArgumentError,
+            "map_control step must be a positive integer; got: #{inspect(step)}"
+    end
+
+    if Map.has_key?(controls, action) do
+      raise ArgumentError, "duplicate map_control action: #{inspect(action)}"
+    end
+  end
+
+  defp put_legacy_control(controls, action, slots) do
+    slots = List.wrap(slots)
+
+    if slots == [] or Map.has_key?(controls, action) do
+      controls
+    else
+      Map.put(controls, action, %{
+        action: action,
+        label: map_control_label(action),
+        slot: slots,
+        step: 1
+      })
+    end
+  end
+
+  defp map_control_label(action) do
+    action
+    |> String.split("-")
+    |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
+  defp pan_control_position("pan-up"), do: %{x: 24, y: 0}
+  defp pan_control_position("pan-left"), do: %{x: 0, y: 24}
+  defp pan_control_position("pan-right"), do: %{x: 48, y: 24}
+  defp pan_control_position("pan-down"), do: %{x: 24, y: 48}
+
   defp prepare_render_assigns(%{live_map_prepared: true} = assigns), do: assigns
 
   defp prepare_render_assigns(assigns) do
@@ -210,6 +389,8 @@ defmodule LiveMap do
     |> Map.put_new(:title, "")
     |> Map.put_new(:style, [])
     |> Map.put_new(:zoom, 0)
+    |> Map.put_new(:on_bounds_changed, nil)
+    |> Map.put_new(:map_control, [])
     |> Map.put_new(:zoom_in, [])
     |> Map.put_new(:zoom_out, [])
     |> Map.put_new(:polyline, [])
@@ -220,6 +401,7 @@ defmodule LiveMap do
     |> Map.put_new(:longitude, nil)
     |> Map.put_new(:"rendering-type", nil)
     |> Map.put_new(:tile_source, nil)
+    |> assign_map_controls()
     |> assign_prepared_layers()
   end
 

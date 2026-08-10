@@ -24,8 +24,12 @@ defmodule LiveMap.View do
       width={@width} height={@height}
       center={@center} zoom={@zoom}
     >
-      <:zoom_in>+</:zoom_in>
-      <:zoom_out>-</:zoom_out>
+      <:map_control action="pan-up">↑</:map_control>
+      <:map_control action="pan-left">←</:map_control>
+      <:map_control action="pan-right">→</:map_control>
+      <:map_control action="pan-down">↓</:map_control>
+      <:map_control action="zoom-in">+</:map_control>
+      <:map_control action="zoom-out">-</:map_control>
     </.live_component>
     """
   end

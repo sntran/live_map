@@ -122,31 +122,22 @@ defmodule LiveEarthquakes do
     {:noreply, assign(socket, loading?: false, error: msg)}
   end
 
+  def handle_info(
+        {:map_bounds_changed,
+         %{id: "earthquakes-map", center: {latitude, longitude}, zoom: zoom}},
+        socket
+      ) do
+    patch_params(socket,
+      zoom: zoom |> max(@min_zoom) |> min(@max_zoom),
+      latitude: latitude |> max(@min_latitude) |> min(@max_latitude),
+      longitude: normalize_longitude(longitude)
+    )
+  end
+
   def handle_event("toggle_rendering_type", %{"rendering-type" => type}, socket) do
     patch_params(socket,
       rendering_type: rendering_type_param(type, socket.assigns.rendering_type)
     )
-  end
-
-  def handle_event("zoom_in", _params, socket) do
-    patch_zoom(socket, min(socket.assigns.zoom + 1, @max_zoom))
-  end
-
-  def handle_event("zoom_out", _params, socket) do
-    patch_zoom(socket, max(socket.assigns.zoom - 1, @min_zoom))
-  end
-
-  def handle_event("move", %{"lat" => lat, "lon" => lon}, socket) do
-    {latitude, longitude} =
-      center_param("#{lat},#{lon}", {socket.assigns.latitude, socket.assigns.longitude})
-
-    patch_params(socket, latitude: latitude, longitude: longitude)
-  end
-
-  defp patch_zoom(socket, zoom) when zoom == socket.assigns.zoom, do: {:noreply, socket}
-
-  defp patch_zoom(socket, zoom) do
-    patch_params(socket, zoom: zoom)
   end
 
   defp patch_params(socket, overrides) do
@@ -199,6 +190,12 @@ defmodule LiveEarthquakes do
     :erlang.float_to_binary(value, [{:decimals, 6}, :compact])
   end
 
+  defp normalize_longitude(longitude) do
+    longitude - 360.0 * :math.floor((longitude + 180.0) / 360.0)
+  end
+
+  defp notify_bounds_changed(view), do: send(self(), {:map_bounds_changed, view})
+
   def render(assigns) do
     ~H"""
     <div style="font-family: system-ui; max-width: 900px; margin: 0 auto; padding: 20px;">
@@ -219,11 +216,6 @@ defmodule LiveEarthquakes do
       </div>
 
       <div style="position: relative; height: 600px; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background-color: #f0fdf4;">
-        <div style="position: absolute; bottom: 20px; right: 20px; z-index: 10; display: flex; flex-direction: column; gap: 8px;">
-          <button phx-click="zoom_in" style="width: 36px; height: 36px; border-radius: 8px; border: 1px solid #ccc; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; padding-bottom: 2px;">+</button>
-          <button phx-click="zoom_out" style="width: 36px; height: 36px; border-radius: 8px; border: 1px solid #ccc; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; padding-bottom: 2px;">-</button>
-        </div>
-
         <div :if={@loading?} style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.7); z-index: 20;">
           <h3 style="color: #333;">Loading geological datasets...</h3>
         </div>
@@ -241,7 +233,32 @@ defmodule LiveEarthquakes do
           width={900}
           height={600}
           rendering-type={@rendering_type}
+          on_bounds_changed={&notify_bounds_changed/1}
         >
+          <:map_control action="pan-up">
+            <span style="font-size: 16px; font-weight: 700; color: #1f2937;">↑</span>
+          </:map_control>
+
+          <:map_control action="pan-left">
+            <span style="font-size: 16px; font-weight: 700; color: #1f2937;">←</span>
+          </:map_control>
+
+          <:map_control action="pan-right">
+            <span style="font-size: 16px; font-weight: 700; color: #1f2937;">→</span>
+          </:map_control>
+
+          <:map_control action="pan-down">
+            <span style="font-size: 16px; font-weight: 700; color: #1f2937;">↓</span>
+          </:map_control>
+
+          <:map_control action="zoom-in">
+            <span style="font-size: 18px; font-weight: 700; color: #1f2937;">+</span>
+          </:map_control>
+
+          <:map_control action="zoom-out">
+            <span style="font-size: 18px; font-weight: 700; color: #1f2937;">−</span>
+          </:map_control>
+
           <:polygon
             :for={plate <- @plates}
             id={plate.id}

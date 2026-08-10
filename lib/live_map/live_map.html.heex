@@ -197,56 +197,39 @@
     </g>
   </svg>
 
-  <g :if={@zoom_in != [] or @zoom_out != []} transform={"translate(#{@width - 24 - 16},#{@height - 24 - 16 - 24})"}>
-    <rect x="0" y="0" width="24" height={if(@zoom_in != [] and @zoom_out != [], do: 48, else: 24)} rx="5" ry="5" fill="white" />
-
+  <g
+    :if={@map_controls != []}
+    class="live-map-controls"
+    data-live-map-controls="true"
+    transform={"translate(#{@width - @map_control_width - 16},#{@height - @map_control_height - 16})"}
+  >
     <g
-      :if={@zoom_in != []}
+      :for={control <- @map_controls}
+      class="live-map-control"
+      data-live-map-control={control.action}
+      data-live-map-control-step={control.step}
       role="button"
       tabindex="0"
-      aria-label="Zoom In"
+      aria-label={control.label}
       width="24"
       height="24"
+      transform={"translate(#{control.x},#{control.y})"}
       cursor="pointer"
       pointer-events="all"
-      phx-click="zoom_in"
-      phx-keyup="zoom_in"
+      phx-click="map_control"
+      phx-keyup="map_control"
+      phx-value-action={control.action}
       phx-throttle="500"
       phx-target={@myself}
     >
+      <rect x="0" y="0" width="24" height="24" rx="5" ry="5" fill="white" />
+
       <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
         <div
           xmlns="http://www.w3.org/1999/xhtml"
           style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
         >
-          {render_slot(@zoom_in)}
-        </div>
-      </foreignObject>
-
-      <rect x="0" y="0" width="24" height="24" fill="none" />
-    </g>
-
-    <g
-      :if={@zoom_out != []}
-      role="button"
-      tabindex="0"
-      aria-label="Zoom Out"
-      width="24"
-      height="24"
-      transform={if(@zoom_in != [], do: "translate(0,24)", else: nil)}
-      cursor="pointer"
-      pointer-events="all"
-      phx-click="zoom_out"
-      phx-keyup="zoom_out"
-      phx-throttle="500"
-      phx-target={@myself}
-    >
-      <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
-        <div
-          xmlns="http://www.w3.org/1999/xhtml"
-          style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
-        >
-          {render_slot(@zoom_out)}
+          {render_slot(control.slot)}
         </div>
       </foreignObject>
 

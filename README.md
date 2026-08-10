@@ -40,14 +40,18 @@ A LiveMap can be added to a LiveView by:
         }
       </:style>
 
-      <%# Optional custom HTML zoom controls %>
-      <:zoom_in>
-        <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">+</span>
-      </:zoom_in>
+      <%# Optional custom HTML map controls %>
+      <:map_control action="pan-up">
+        <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">↑</span>
+      </:map_control>
 
-      <:zoom_out>
+      <:map_control action="zoom-in">
+        <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">+</span>
+      </:map_control>
+
+      <:map_control action="zoom-out">
         <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">-</span>
-      </:zoom_out>
+      </:map_control>
 
       <%# Optional SVG overlays projected from map coordinates %>
       <:polygon
@@ -90,9 +94,17 @@ A LiveMap can be added to a LiveView by:
 
 Run `examples/live_maps.exs` for a single-file LiveView example powered by `Mix.install/1`.
 
-Zoom controls are opt-in: LiveMap renders no zoom buttons by default. Add the
-`:zoom_in` and/or `:zoom_out` slots with HTML content to enable them, such as
-for interactive LiveView output.
+Map controls are opt-in: LiveMap renders no navigation buttons by default. Add
+repeated `:map_control` slots with an `action` and HTML content to enable any
+combination of `zoom-in`, `zoom-out`, `pan-up`, `pan-right`, `pan-down`, and
+`pan-left`. The optional positive `step` defaults to `1`. A zoom step changes
+one zoom level; a pan step moves half the map width or height at the current
+zoom.
+
+Use `on_bounds_changed` when the parent LiveView needs to retain or persist
+control-driven bounds changes. The server callback receives the map `id`, triggering
+`action`, new `center`, and new `zoom`; it can send that value back to the parent
+process for URL patching or other state updates.
 
 Each `:marker` slot entry must provide `position` and `title`. The
 optional `id` is used to generate a stable DOM id. LiveMap only projects and renders
@@ -113,9 +125,9 @@ The map-level `latitude` and `longitude` attributes and the marker-level
 `latitude`, `longitude`, and `label` attributes are deprecated compatibility
 fallbacks. When both forms are supplied, `center`, `position`, and `title` win.
 
-Custom zoom controls follow the same rule: use `:zoom_in` and `:zoom_out` with
-HTML content only. LiveMap wraps that content for display inside the SVG control
-chrome.
+Custom map controls use HTML content only. LiveMap wraps that content for
+display inside the SVG control chrome. The old `:zoom_in` and `:zoom_out` slots
+remain as deprecated one-step aliases for the corresponding map-control actions.
 
 Polygon and polyline overlays are projected in map coordinates and rendered as
 SVG shapes on their own layer. Each `:polygon` or `:polyline` slot accepts a
