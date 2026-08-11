@@ -193,6 +193,9 @@ defmodule LiveMap.Style do
     |> Enum.join(" ")
   end
 
+  defp compile_styler(%{"visibility" => "off"}, "labels.text.stroke", _),
+    do: "stroke: none !important;"
+
   defp compile_styler(%{"visibility" => "off"}, _, _), do: "display: none !important;"
   defp compile_styler(%{"visibility" => "on"}, _, _), do: "display: block !important;"
 

@@ -53,6 +53,10 @@ A LiveMap can be added to a LiveView by:
         <span class="inline-flex h-6 w-6 items-center justify-center rounded bg-white text-slate-900">-</span>
       </:map_control>
 
+      <:map_control action="fullscreen">
+        <span class="inline-flex h-6 w-6 items-center justify-center text-slate-900">⛶</span>
+      </:map_control>
+
       <%# Optional SVG overlays projected from map coordinates %>
       <:polygon
         id="district"
@@ -96,10 +100,17 @@ Run `examples/live_maps.exs` for a single-file LiveView example powered by `Mix.
 
 Map controls are opt-in: LiveMap renders no navigation buttons by default. Add
 repeated `:map_control` slots with an `action` and HTML content to enable any
-combination of `zoom-in`, `zoom-out`, `pan-up`, `pan-right`, `pan-down`, and
-`pan-left`. The optional positive `step` defaults to `1`. A zoom step changes
-one zoom level; a pan step moves half the map width or height at the current
-zoom.
+combination of `zoom-in`, `zoom-out`, `pan-up`, `pan-right`, `pan-down`,
+`pan-left`, and `fullscreen`. Pan controls initially render as a compact D-pad
+launcher. Activating it reveals the directional controls, with zoom in above
+the right control and zoom out below it. The optional positive `step` defaults
+to `1`. A zoom step changes one zoom level; a pan step moves half the map width
+or height at the current zoom.
+
+The `fullscreen` action toggles a server-rendered, CSS viewport-filling mode and
+does not require a custom JavaScript hook. Browser-native fullscreen, which also
+hides browser chrome, requires the client-side Fullscreen API and is therefore
+outside LiveMap's server-rendered controls.
 
 Use `on_bounds_changed` when the parent LiveView needs to retain or persist
 control-driven bounds changes. The server callback receives the map `id`, triggering

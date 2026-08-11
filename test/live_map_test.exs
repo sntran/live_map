@@ -48,7 +48,7 @@ defmodule LiveMapTest do
     end
 
     test "renders custom HTML through unified map control slots" do
-      rendered = component_with_map_controls()
+      rendered = component_with_map_controls(%{map_controls_expanded?: true})
 
       {:ok, document} = Floki.parse_document(rendered)
 
@@ -60,34 +60,60 @@ defmodule LiveMapTest do
 
       [pan_right] = Floki.find(document, "[data-live-map-control='pan-right']")
       assert Floki.attribute(pan_right, "data-live-map-control-step") === ["2"]
+
+      assert [_fullscreen] = Floki.find(document, "[data-live-map-control='fullscreen']")
+      assert [_fullscreen_body] = Floki.find(document, "[data-map-control-body='fullscreen']")
     end
 
-    test "lays out pan controls as a D-pad with a compact zoom stack" do
+    test "collapses pan controls behind a compact D-pad launcher" do
       {:ok, document} = component_with_map_controls() |> Floki.parse_document()
       [group] = Floki.find(document, "g.live-map-controls")
 
-      assert Floki.attribute(group, "transform") === ["translate(212,14)"]
+      assert Floki.attribute(group, "transform") === ["translate(248,98)"]
+      assert Floki.attribute(group, "data-live-map-controls-expanded") === ["false"]
+      assert Floki.find(group, "[data-live-map-control]") === []
+
+      [toggle] = Floki.find(group, "[data-live-map-control-toggle='true']")
+      assert Floki.attribute(toggle, "transform") === ["translate(0,0)"]
+      assert Floki.attribute(toggle, "aria-label") === ["Expand Map Controls"]
+      assert Floki.attribute(toggle, "aria-expanded") === ["false"]
+    end
+
+    test "lays out expanded pan and zoom controls like Google Maps" do
+      {:ok, document} =
+        component_with_map_controls(%{map_controls_expanded?: true})
+        |> Floki.parse_document()
+
+      [group] = Floki.find(document, "g.live-map-controls")
+      assert Floki.attribute(group, "transform") === ["translate(116,10)"]
+      assert Floki.attribute(group, "data-live-map-controls-expanded") === ["true"]
 
       expected_positions = %{
-        "pan-up" => "translate(24,0)",
-        "pan-left" => "translate(0,24)",
-        "pan-right" => "translate(48,24)",
-        "pan-down" => "translate(24,48)",
-        "zoom-in" => "translate(24,72)",
-        "zoom-out" => "translate(24,96)"
+        "pan-up" => "translate(44,0)",
+        "pan-left" => "translate(0,44)",
+        "pan-right" => "translate(88,44)",
+        "pan-down" => "translate(44,88)",
+        "zoom-in" => "translate(88,0)",
+        "zoom-out" => "translate(88,88)"
       }
 
       for {action, transform} <- expected_positions do
         [control] = Floki.find(group, "[data-live-map-control='#{action}']")
         assert Floki.attribute(control, "transform") === [transform]
       end
+
+      [toggle] = Floki.find(group, "[data-live-map-control-toggle='true']")
+      assert Floki.attribute(toggle, "transform") === ["translate(132,44)"]
+      assert Floki.attribute(toggle, "aria-label") === ["Collapse Map Controls"]
+      assert Floki.attribute(toggle, "aria-expanded") === ["true"]
     end
 
     test "keeps zoom-only controls in the existing narrow bottom-right position" do
       {:ok, document} = component_with_zoom_only_controls() |> Floki.parse_document()
       [group] = Floki.find(document, "g.live-map-controls")
 
-      assert Floki.attribute(group, "transform") === ["translate(260,86)"]
+      assert Floki.attribute(group, "transform") === ["translate(248,54)"]
+      assert Floki.find(group, "[data-live-map-control-toggle]") === []
 
       assert Floki.attribute(
                hd(Floki.find(group, "[data-live-map-control='zoom-in']")),
@@ -100,7 +126,7 @@ defmodule LiveMapTest do
                hd(Floki.find(group, "[data-live-map-control='zoom-out']")),
                "transform"
              ) === [
-               "translate(0,24)"
+               "translate(0,44)"
              ]
     end
 
@@ -197,6 +223,24 @@ defmodule LiveMapTest do
 
       assert [_foreign_object] = Floki.find(marker, "foreignobject")
       assert [_html_marker] = Floki.find(marker, "div[data-html-marker='center']")
+    end
+
+    test "only the custom marker content participates in pointer hit testing" do
+      rendered =
+        component_with_markers(
+          [
+            %{id: "center", latitude: 0, longitude: 0, label: "Center marker"}
+          ],
+          marker_body: :html
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [marker] = Floki.find(document, "#live-map-marker-center")
+      [html_wrapper] = Floki.find(marker, ".live-map-marker-html")
+      [html_content] = Floki.find(marker, ".live-map-marker-html-content")
+
+      assert Floki.attribute(html_wrapper, "style") |> hd() =~ "pointer-events: none"
+      assert Floki.attribute(html_content, "style") |> hd() =~ "pointer-events: auto"
     end
 
     test "falls back to a default marker pin with an accessible label when the slot body is empty" do
@@ -447,11 +491,31 @@ defmodule LiveMapTest do
       [conn: Phoenix.ConnTest.build_conn()]
     end
 
+    test "expands and collapses the D-pad launcher", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      assert rendered =~ ~s(aria-label="Expand Map Controls")
+      refute rendered =~ ~s(aria-label="Pan Right")
+
+      rendered = expand_map_controls(view)
+      assert rendered =~ ~s(aria-label="Collapse Map Controls")
+      assert rendered =~ ~s(aria-label="Pan Right")
+      assert rendered =~ ~s(aria-label="Zoom In")
+
+      rendered =
+        view
+        |> element("#live-map [aria-label=\"Collapse Map Controls\"]")
+        |> render_click()
+
+      assert rendered =~ ~s(aria-label="Expand Map Controls")
+      refute rendered =~ ~s(aria-label="Pan Right")
+    end
+
     test "in by clicking Zoom In button", %{conn: conn} do
       {:ok, view, rendered} = live(conn, "/")
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
       assert [_, _tile | _] = Floki.find(document, "image")
+      expand_map_controls(view)
 
       rendered =
         view
@@ -466,6 +530,7 @@ defmodule LiveMapTest do
 
     test "out by clicking Zoom Out button", %{conn: conn} do
       {:ok, view, _rendered} = live(conn, "/")
+      expand_map_controls(view)
 
       # Zoom in first to go to level 1.
       view
@@ -493,6 +558,8 @@ defmodule LiveMapTest do
         |> hd()
         |> Floki.attribute("x")
 
+      expand_map_controls(view)
+
       rendered =
         view
         |> element("#live-map [role=\"button\"][aria-label=\"Pan Right\"]")
@@ -514,6 +581,13 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       # There is only 1 tile at zoom level 0
       assert [_, _tile | _] = Floki.find(document, "image")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Expand Map Controls\"]")
+        |> render_keyup(%{"key" => "Enter"})
+
+      assert rendered =~ ~s(aria-label="Zoom In")
 
       rendered =
         view
@@ -543,6 +617,13 @@ defmodule LiveMapTest do
 
       rendered =
         view
+        |> element("#live-map [role=\"button\"][aria-label=\"Expand Map Controls\"]")
+        |> render_keyup(%{"key" => " "})
+
+      assert rendered =~ ~s(aria-label="Zoom In")
+
+      rendered =
+        view
         |> element("#live-map [role=\"button\"][aria-label=\"Zoom In\"]")
         |> render_keyup(%{"key" => " "})
 
@@ -563,6 +644,16 @@ defmodule LiveMapTest do
 
     test "ignores all other keys", %{conn: conn} do
       {:ok, view, _rendered} = live(conn, "/")
+
+      rendered =
+        view
+        |> element("#live-map [role=\"button\"][aria-label=\"Expand Map Controls\"]")
+        |> render_keyup(%{"key" => "ArrowUp"})
+
+      assert rendered =~ ~s(aria-label="Expand Map Controls")
+      refute rendered =~ ~s(aria-label="Zoom In")
+
+      expand_map_controls(view)
 
       rendered =
         view
@@ -599,6 +690,38 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       # There is now 1 tile at zoom level 0
       assert [_, _ | _] = Floki.find(document, "image")
+    end
+
+    test "toggles the server-rendered viewport-filling mode", %{conn: conn} do
+      {:ok, view, rendered} = live(conn, "/")
+      {:ok, document} = Floki.parse_document(rendered)
+      [map] = Floki.find(document, "#live-map")
+
+      assert Floki.attribute(map, "data-live-map-fullscreen") === ["false"]
+      assert Floki.attribute(map, "width") === ["300"]
+      assert Floki.attribute(map, "height") === ["150"]
+
+      rendered =
+        view
+        |> element("#live-map [aria-label=\"Enter Fullscreen\"]")
+        |> render_click()
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [map] = Floki.find(document, "#live-map")
+      assert Floki.attribute(map, "data-live-map-fullscreen") === ["true"]
+      assert Floki.attribute(map, "width") === ["100%"]
+      assert Floki.attribute(map, "height") === ["100%"]
+      assert Floki.attribute(map, "class") === ["live-map-fullscreen"]
+      assert Floki.attribute(map, "style") |> hd() =~ "position: fixed"
+      assert [_exit] = Floki.find(map, "[aria-label='Exit Fullscreen']")
+
+      rendered =
+        view
+        |> element("#live-map [aria-label=\"Exit Fullscreen\"]")
+        |> render_click()
+
+      assert rendered =~ ~s(data-live-map-fullscreen="false")
+      assert rendered =~ ~s(aria-label="Enter Fullscreen")
     end
 
     test "uses the server-owned step for zoom and clamps at zero" do
@@ -981,6 +1104,12 @@ defmodule LiveMapTest do
     |> Enum.map_join(" ", &String.capitalize/1)
   end
 
+  defp expand_map_controls(view) do
+    view
+    |> element("#live-map [role=\"button\"][aria-label=\"Expand Map Controls\"]")
+    |> render_click()
+  end
+
   defp component_with_markers(markers, assigns \\ []) do
     defaults = %{
       id: "live-map",
@@ -1042,10 +1171,19 @@ defmodule LiveMapTest do
   end
 
   defp component_with_map_controls(assigns \\ %{}) do
+    assigns = Map.put_new(assigns, :map_controls_expanded?, false)
+
     render_component(
       fn assigns ->
         ~H"""
-        <.live_component module={LiveMap} id="live-map" width={300} height={150} zoom={0}>
+        <.live_component
+          module={LiveMap}
+          id="live-map"
+          width={300}
+          height={150}
+          zoom={0}
+          map_controls_expanded?={@map_controls_expanded?}
+        >
           <:map_control action="pan-up">
             <span data-map-control-body="pan-up">↑</span>
           </:map_control>
@@ -1068,6 +1206,10 @@ defmodule LiveMapTest do
 
           <:map_control action="zoom-out">
             <span data-map-control-body="zoom-out">-</span>
+          </:map_control>
+
+          <:map_control action="fullscreen">
+            <span data-map-control-body="fullscreen">⛶</span>
           </:map_control>
         </.live_component>
         """
@@ -1352,6 +1494,8 @@ defmodule LiveMapTest do
         min_x: 256,
         min_y: 256,
         style: [],
+        fullscreen?: false,
+        fullscreen_control: nil,
         map_controls: [],
         zoom_in: [],
         zoom_out: [],

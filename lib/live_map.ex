@@ -11,7 +11,7 @@ defmodule LiveMap do
   alias LiveMap.Marker
   alias LiveMap.Tile
 
-  @map_control_actions ~w(pan-up pan-left pan-right pan-down zoom-in zoom-out)
+  @map_control_actions ~w(pan-up pan-left pan-right pan-down zoom-in zoom-out fullscreen)
   @pan_control_actions ~w(pan-up pan-left pan-right pan-down)
   @zoom_control_actions ~w(zoom-in zoom-out)
 
@@ -29,6 +29,8 @@ defmodule LiveMap do
      |> assign_new(:style, fn -> [] end)
      |> assign_new(:zoom, fn -> 0 end)
      |> assign_new(:on_bounds_changed, fn -> nil end)
+     |> assign_new(:map_controls_expanded?, fn -> false end)
+     |> assign_new(:fullscreen?, fn -> false end)
      |> assign_new(:map_control, fn -> [] end)
      |> assign_new(:zoom_in, fn -> [] end)
      |> assign_new(:zoom_out, fn -> [] end)
@@ -179,13 +181,33 @@ defmodule LiveMap do
   end
 
   def handle_event("map_control", %{"action" => action}, socket) do
-    case Enum.find(socket.assigns[:map_controls] || [], &(&1.action == action)) do
+    controls = [socket.assigns[:fullscreen_control] | socket.assigns[:map_controls] || []]
+
+    case Enum.find(controls, &(&1 && &1.action == action)) do
       nil -> {:noreply, socket}
       control -> apply_map_control(socket, control)
     end
   end
 
   def handle_event("map_control", _params, socket), do: {:noreply, socket}
+
+  def handle_event("toggle_map_controls", %{"key" => key}, socket)
+      when key not in ["Enter", " ", "Spacebar"] do
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_map_controls", _params, socket) do
+    if socket.assigns[:map_controls_collapsible?] do
+      expanded? = not socket.assigns[:map_controls_expanded?]
+      {:noreply, assign(socket, map_control_frame(true, expanded?, socket.assigns.map_controls))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp apply_map_control(socket, %{action: "fullscreen"}) do
+    {:noreply, assign(socket, :fullscreen?, not socket.assigns[:fullscreen?])}
+  end
 
   defp apply_map_control(socket, %{action: action, step: step})
        when action in @zoom_control_actions do
@@ -307,8 +329,6 @@ defmodule LiveMap do
       end)
 
     pan_controls? = pan_controls != []
-    zoom_x = if pan_controls?, do: 24, else: 0
-    zoom_y = if pan_controls?, do: 72, else: 0
 
     zoom_controls =
       @zoom_control_actions
@@ -320,19 +340,20 @@ defmodule LiveMap do
       end)
       |> Enum.with_index()
       |> Enum.map(fn {control, index} ->
-        Map.merge(control, %{x: zoom_x, y: zoom_y + index * 24})
+        if pan_controls? do
+          Map.merge(control, zoom_control_position(control.action))
+        else
+          Map.merge(control, %{x: 0, y: index * 44})
+        end
       end)
 
     controls = pan_controls ++ zoom_controls
-    control_width = if pan_controls?, do: 72, else: if(zoom_controls == [], do: 0, else: 24)
-
-    control_height =
-      if pan_controls?, do: 72 + length(zoom_controls) * 24, else: length(zoom_controls) * 24
+    expanded? = pan_controls? and Map.get(assigns, :map_controls_expanded?, false)
 
     assigns
     |> Map.put(:map_controls, controls)
-    |> Map.put(:map_control_width, control_width)
-    |> Map.put(:map_control_height, control_height)
+    |> Map.put(:fullscreen_control, Map.get(controls_by_action, "fullscreen"))
+    |> Map.merge(map_control_frame(pan_controls?, expanded?, controls))
   end
 
   defp validate_map_control!(action, step, controls) do
@@ -373,10 +394,49 @@ defmodule LiveMap do
     |> Enum.map_join(" ", &String.capitalize/1)
   end
 
-  defp pan_control_position("pan-up"), do: %{x: 24, y: 0}
-  defp pan_control_position("pan-left"), do: %{x: 0, y: 24}
-  defp pan_control_position("pan-right"), do: %{x: 48, y: 24}
-  defp pan_control_position("pan-down"), do: %{x: 24, y: 48}
+  defp pan_control_position("pan-up"), do: %{x: 44, y: 0}
+  defp pan_control_position("pan-left"), do: %{x: 0, y: 44}
+  defp pan_control_position("pan-right"), do: %{x: 88, y: 44}
+  defp pan_control_position("pan-down"), do: %{x: 44, y: 88}
+
+  defp zoom_control_position("zoom-in"), do: %{x: 88, y: 0}
+  defp zoom_control_position("zoom-out"), do: %{x: 88, y: 88}
+
+  defp map_control_frame(true, true, _controls) do
+    %{
+      map_controls_collapsible?: true,
+      map_controls_expanded?: true,
+      map_control_toggle_position: %{x: 132, y: 44},
+      map_control_width: 168,
+      map_control_height: 124
+    }
+  end
+
+  defp map_control_frame(true, false, _controls) do
+    %{
+      map_controls_collapsible?: true,
+      map_controls_expanded?: false,
+      map_control_toggle_position: %{x: 0, y: 0},
+      map_control_width: 36,
+      map_control_height: 36
+    }
+  end
+
+  defp map_control_frame(false, _expanded?, controls) do
+    control_height =
+      case controls do
+        [] -> 0
+        controls -> controls |> Enum.max_by(& &1.y) |> then(&(&1.y + 36))
+      end
+
+    %{
+      map_controls_collapsible?: false,
+      map_controls_expanded?: false,
+      map_control_toggle_position: nil,
+      map_control_width: if(controls == [], do: 0, else: 36),
+      map_control_height: control_height
+    }
+  end
 
   defp prepare_render_assigns(%{live_map_prepared: true} = assigns), do: assigns
 
@@ -390,6 +450,8 @@ defmodule LiveMap do
     |> Map.put_new(:style, [])
     |> Map.put_new(:zoom, 0)
     |> Map.put_new(:on_bounds_changed, nil)
+    |> Map.put_new(:map_controls_expanded?, false)
+    |> Map.put_new(:fullscreen?, false)
     |> Map.put_new(:map_control, [])
     |> Map.put_new(:zoom_in, [])
     |> Map.put_new(:zoom_out, [])

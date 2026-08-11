@@ -30,6 +30,7 @@ defmodule LiveMap.View do
       <:map_control action="pan-down">↓</:map_control>
       <:map_control action="zoom-in">+</:map_control>
       <:map_control action="zoom-out">-</:map_control>
+      <:map_control action="fullscreen">⛶</:map_control>
     </.live_component>
     """
   end

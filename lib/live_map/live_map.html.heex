@@ -1,17 +1,37 @@
 <svg
   id={@id}
-  class={@class}
+  class={if(@fullscreen?, do: [@class, "live-map-fullscreen"], else: @class)}
   data-live-map-zoom={@zoom}
+  data-live-map-fullscreen={if(@fullscreen?, do: "true", else: "false")}
   version="1.1"
   xmlns="http://www.w3.org/2000/svg"
-  width={@width}
-  height={@height}
+  width={if(@fullscreen?, do: "100%", else: @width)}
+  height={if(@fullscreen?, do: "100%", else: @height)}
   viewBox={"0 0 #{@width} #{@height}"}
   preserveAspectRatio="none"
+  style={
+    if(@fullscreen?,
+      do:
+        "position: fixed; inset: 0; z-index: 2147483647; width: 100vw; height: 100vh; background: white;"
+    )
+  }
 >
   <title>{@title}</title>
 
   <style>
+    .live-map-control-surface {
+      filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.24));
+    }
+
+    .live-map-control:hover .live-map-control-surface {
+      fill: #f8f9fa;
+    }
+
+    .live-map-control:focus .live-map-control-surface {
+      stroke: #1a73e8;
+      stroke-width: 2;
+    }
+
     <%= render_slot(@style) %>
   </style>
 
@@ -178,9 +198,11 @@
           <div
             xmlns="http://www.w3.org/1999/xhtml"
             class="live-map-marker-html"
-            style="pointer-events: auto; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"
+            style="pointer-events: none; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"
           >
-            {marker_body}
+            <div class="live-map-marker-html-content" style="pointer-events: auto;">
+              {marker_body}
+            </div>
           </div>
         </foreignObject>
       <% else %>
@@ -201,18 +223,20 @@
     :if={@map_controls != []}
     class="live-map-controls"
     data-live-map-controls="true"
+    data-live-map-controls-expanded={if(@map_controls_expanded?, do: "true", else: "false")}
     transform={"translate(#{@width - @map_control_width - 16},#{@height - @map_control_height - 16})"}
   >
     <g
       :for={control <- @map_controls}
+      :if={not @map_controls_collapsible? or @map_controls_expanded?}
       class="live-map-control"
       data-live-map-control={control.action}
       data-live-map-control-step={control.step}
       role="button"
       tabindex="0"
       aria-label={control.label}
-      width="24"
-      height="24"
+      width="36"
+      height="36"
       transform={"translate(#{control.x},#{control.y})"}
       cursor="pointer"
       pointer-events="all"
@@ -222,18 +246,83 @@
       phx-throttle="500"
       phx-target={@myself}
     >
-      <rect x="0" y="0" width="24" height="24" rx="5" ry="5" fill="white" />
+      <circle class="live-map-control-surface" cx="18" cy="18" r="18" fill="white" />
 
-      <foreignObject x="0" y="0" width="24" height="24" overflow="visible" pointer-events="none">
+      <foreignObject x="0" y="0" width="36" height="36" overflow="visible" pointer-events="none">
         <div
           xmlns="http://www.w3.org/1999/xhtml"
-          style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+          style="width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
         >
           {render_slot(control.slot)}
         </div>
       </foreignObject>
 
-      <rect x="0" y="0" width="24" height="24" fill="none" />
+      <circle cx="18" cy="18" r="18" fill="transparent" />
     </g>
+
+    <g
+      :if={@map_controls_collapsible?}
+      class="live-map-control live-map-control-toggle"
+      data-live-map-control-toggle="true"
+      role="button"
+      tabindex="0"
+      aria-label={if(@map_controls_expanded?, do: "Collapse Map Controls", else: "Expand Map Controls")}
+      aria-expanded={to_string(@map_controls_expanded?)}
+      width="36"
+      height="36"
+      transform={
+        "translate(#{@map_control_toggle_position.x},#{@map_control_toggle_position.y})"
+      }
+      cursor="pointer"
+      pointer-events="all"
+      phx-click="toggle_map_controls"
+      phx-keyup="toggle_map_controls"
+      phx-throttle="500"
+      phx-target={@myself}
+    >
+      <circle class="live-map-control-surface" cx="18" cy="18" r="18" fill="white" />
+      <path
+        d="M18 7v22M14 11l4-4 4 4M14 25l4 4 4-4M7 18h22M11 14l-4 4 4 4M25 14l4 4-4 4"
+        fill="none"
+        stroke="#5f6368"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        pointer-events="none"
+      />
+      <circle cx="18" cy="18" r="18" fill="transparent" />
+    </g>
+  </g>
+
+  <g
+    :if={@fullscreen_control}
+    class="live-map-control live-map-fullscreen-control"
+    data-live-map-control="fullscreen"
+    role="button"
+    tabindex="0"
+    aria-label={if(@fullscreen?, do: "Exit Fullscreen", else: "Enter Fullscreen")}
+    width="36"
+    height="36"
+    transform={"translate(#{@width - 52},16)"}
+    cursor="pointer"
+    pointer-events="all"
+    phx-click="map_control"
+    phx-keyup="map_control"
+    phx-value-action="fullscreen"
+    phx-throttle="500"
+    phx-target={@myself}
+  >
+    <circle class="live-map-control-surface" cx="18" cy="18" r="18" fill="white" />
+
+    <foreignObject x="0" y="0" width="36" height="36" overflow="visible" pointer-events="none">
+      <div
+        xmlns="http://www.w3.org/1999/xhtml"
+        style="width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; pointer-events: none;"
+      >
+        {render_slot(@fullscreen_control.slot)}
+      </div>
+    </foreignObject>
+
+    <circle cx="18" cy="18" r="18" fill="transparent" />
   </g>
 </svg>

@@ -259,6 +259,10 @@ defmodule LiveEarthquakes do
             <span style="font-size: 18px; font-weight: 700; color: #1f2937;">−</span>
           </:map_control>
 
+          <:map_control action="fullscreen">
+            <span style="font-size: 18px; font-weight: 700; color: #1f2937;">⛶</span>
+          </:map_control>
+
           <:polygon
             :for={plate <- @plates}
             id={plate.id}

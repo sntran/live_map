@@ -88,6 +88,21 @@ defmodule LiveMap.StyleTest do
     assert css =~ "fill: #00ff00 !important;"
   end
 
+  test "turning off label strokes removes the halo without hiding label text" do
+    styles = [
+      %{
+        "featureType" => "all",
+        "elementType" => "labels.text.stroke",
+        "stylers" => [%{"visibility" => "off"}]
+      }
+    ]
+
+    css = Style.to_css(styles)
+
+    assert css =~ "stroke: none !important;"
+    refute css =~ "display: none"
+  end
+
   test "to_css covers all administrative and landscape feature selectors" do
     styles = [
       %{"featureType" => "administrative", "stylers" => [%{"visibility" => "on"}]},
