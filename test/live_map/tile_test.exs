@@ -6,7 +6,7 @@ defmodule LiveMap.TileTest do
   alias LiveMap.Tile
   doctest Tile
 
-  test "provides built-in raster and vector sources" do
+  test "provides built-in raster, vector, and physical sources" do
     assert Tile.default_source() === %{
              type: :raster,
              url: "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
@@ -21,6 +21,18 @@ defmodule LiveMap.TileTest do
              version: "shortbread_v1",
              max_zoom: 14,
              headers: []
+           }
+
+    assert Tile.default_physical_source() === %{
+             type: :raster,
+             url:
+               "https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}",
+             version: nil,
+             max_zoom: 8,
+             headers: [],
+             attribution:
+               "Physical map: U.S. National Park Service · Map data © OpenStreetMap contributors",
+             attribution_url: "https://goto.arcgisonline.com/maps/World_Physical_Map"
            }
   end
 
@@ -64,6 +76,38 @@ defmodule LiveMap.TileTest do
                href: "https://tiles.example.com/2/0/0.png?zoom=2"
              }
            ]
+  end
+
+  test "prepare_layer crops overzoomed raster source tiles" do
+    layer =
+      Tile.prepare_layer(
+        [%{x: 10, y: 13, z: 5}],
+        %{url: "https://tiles.example.com/{z}/{x}/{y}.jpg", max_zoom: 3}
+      )
+
+    assert layer.tiles === [
+             %{
+               type: :image,
+               x: 2560,
+               y: 3328,
+               width: 256,
+               height: 256,
+               href: "https://tiles.example.com/3/2/3.jpg",
+               view_box: "128 64 64 64"
+             }
+           ]
+  end
+
+  test "prepare_layer preserves source attribution metadata" do
+    layer =
+      Tile.prepare_layer([], %{
+        "url" => "https://tiles.example.com/{z}/{x}/{y}.jpg",
+        "attribution" => "Example tiles",
+        "attribution_url" => "https://tiles.example.com/terms"
+      })
+
+    assert layer.source.attribution == "Example tiles"
+    assert layer.source.attribution_url == "https://tiles.example.com/terms"
   end
 
   test "prepare_layer only requires versions for versioned templates" do
@@ -153,7 +197,13 @@ defmodule LiveMap.TileTest do
       {%{url: "https://tiles.example.com/{z}/{x}/{y}.png", headers: "invalid"},
        ~r/source.headers must be a list/},
       {%{url: "https://tiles.example.com/{z}/{x}/{y}.png", headers: [%{name: "x-example"}]},
-       ~r/invalid tile source header/}
+       ~r/invalid tile source header/},
+      {%{url: "https://tiles.example.com/{z}/{x}/{y}.png", attribution: ""},
+       ~r/source.attribution must be a non-empty string/},
+      {%{
+         url: "https://tiles.example.com/{z}/{x}/{y}.png",
+         attribution_url: "/terms"
+       }, ~r/source.attribution_url must be an absolute http\(s\) URL/}
     ]
 
     Enum.each(cases, fn {source, message} ->

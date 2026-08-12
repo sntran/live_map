@@ -353,6 +353,133 @@ defmodule LiveMapTest do
       assert vector_socket.assigns.tile_source === LiveMap.Tile.default_vector_source()
     end
 
+    test "selects the detailed SVG base style without changing the default" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, default_socket} =
+               LiveMap.update(
+                 %{id: "default-map", width: 0, height: 0, zoom: 0, "rendering-type": "vector"},
+                 socket
+               )
+
+      assert default_socket.assigns[:"base-style"] == "colorful"
+      assert default_socket.assigns.computed_css == ""
+
+      assert {:ok, detailed_socket} =
+               LiveMap.update(
+                 %{
+                   id: "detailed-map",
+                   width: 0,
+                   height: 0,
+                   zoom: 0,
+                   "rendering-type": "vector",
+                   "base-style": "detailed"
+                 },
+                 socket
+               )
+
+      assert detailed_socket.assigns[:"base-style"] == "detailed"
+      assert detailed_socket.assigns.computed_css =~ "/* LiveMap detailed SVG preset */"
+    end
+
+    test "selects the physical preset with its raster underlay and attribution" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, physical_socket} =
+               LiveMap.update(
+                 %{
+                   id: "physical-map",
+                   width: 256,
+                   height: 256,
+                   center: {29.7604, -95.3698},
+                   zoom: 5,
+                   "base-style": "physical"
+                 },
+                 socket
+               )
+
+      assert physical_socket.assigns[:"base-style"] == "physical"
+      assert physical_socket.assigns.background_opacity == 1
+
+      assert physical_socket.assigns[:"background-tile-source"] ===
+               LiveMap.Tile.default_physical_source()
+
+      assert physical_socket.assigns.computed_css =~
+               "/* LiveMap physical SVG overlay preset */"
+
+      assert physical_socket.assigns.attribution =~ "U.S. National Park Service"
+      assert physical_socket.assigns.attribution_url =~ "World_Physical_Map"
+      assert physical_socket.assigns.background_tiles != []
+
+      assert Enum.all?(physical_socket.assigns.background_tiles, fn tile ->
+               tile.href =~ "/World_Physical_Map/MapServer/tile/5/"
+             end)
+    end
+
+    test "fades and crops the physical underlay before detailed vectors take over" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert {:ok, zoomed_socket} =
+               LiveMap.update(
+                 %{
+                   id: "physical-map",
+                   width: 256,
+                   height: 256,
+                   center: {29.7604, -95.3698},
+                   zoom: 9,
+                   "base-style": "physical"
+                 },
+                 socket
+               )
+
+      assert zoomed_socket.assigns.background_opacity == 0.42
+      assert Enum.all?(zoomed_socket.assigns.background_tiles, &Map.has_key?(&1, :view_box))
+
+      assert Enum.all?(zoomed_socket.assigns.background_tiles, fn tile ->
+               tile.href =~ "/World_Physical_Map/MapServer/tile/8/"
+             end)
+
+      assert {:ok, detailed_socket} =
+               LiveMap.update(%{zoom: 10}, zoomed_socket)
+
+      assert detailed_socket.assigns.background_opacity == 0
+      assert detailed_socket.assigns.background_tiles == []
+    end
+
+    test "renders a custom raster background before the primary tile layer" do
+      html =
+        component(
+          width: 256,
+          height: 256,
+          zoom: 0,
+          attribution: "Example physical tiles",
+          "attribution-url": "https://tiles.example.com/terms",
+          "background-tile-source": %{
+            url: "https://tiles.example.com/physical/{z}/{x}/{y}.jpg"
+          }
+        )
+
+      assert html =~ ~s(id="live-map-background-tiles")
+      assert html =~ "https://tiles.example.com/physical/0/0/0.jpg"
+      assert html =~ ~s(class="live-map-attribution")
+      assert html =~ ~s(href="https://tiles.example.com/terms")
+      assert html =~ "Example physical tiles"
+
+      assert :binary.match(html, ~s(id="live-map-background-tiles")) <
+               :binary.match(html, ~s(id="live-map-tiles"))
+    end
+
+    test "rejects vector background tile sources" do
+      assert_raise ArgumentError, ~r/background-tile-source must be a raster/, fn ->
+        component(
+          "background-tile-source": %{
+            type: :mvt,
+            url: "https://tiles.example.com/{z}/{x}/{y}.mvt"
+          }
+        )
+      end
+    end
+
     test "rendering-type takes precedence over tile_source" do
       custom_source = %{url: "https://tiles.example.com/{z}/{x}/{y}.png"}
       socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
@@ -1502,6 +1629,10 @@ defmodule LiveMapTest do
         myself: nil,
         shape_overlays: [],
         marker_overlays: [],
+        background_tiles: [],
+        background_opacity: 0,
+        attribution: nil,
+        attribution_url: nil,
         tile_layer: %{
           defs: [Phoenix.HTML.raw("<svg id=\"parent-definition\"></svg>")],
           tiles: [placeholder_tile]

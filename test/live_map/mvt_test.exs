@@ -142,6 +142,7 @@ defmodule LiveMap.MVTTest do
 
     assert rendered =~ ~s(class="live-map-tile-svg live-map-zoom-3")
     assert rendered =~ ~s(data-live-map-zoom="3")
+    assert rendered =~ ~s(data-live-map-label-density="overview")
     assert rendered =~ ~s(live-map-shortbread-admin-level-2)
     assert rendered =~ ~s(live-map-shortbread-admin-level-4)
     assert rendered =~ ">Germany</text>"
@@ -158,8 +159,87 @@ defmodule LiveMap.MVTTest do
     assert {:ok, zoomed_svg} = MVT.decode(tile, zoom: 7)
     zoomed_rendered = zoomed_svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
 
+    assert zoomed_rendered =~ ~s(data-live-map-label-density="standard")
+
     assert zoomed_rendered =~
              ".live-map-shortbread-layer-boundary-labels.live-map-shortbread-admin-level-4.live-map-shortbread-shape-text { display: inline;"
+  end
+
+  test "annotates named points with population-based label priorities" do
+    keys = ["kind", "name", "population"]
+
+    values = [
+      value_message(:string, "city"),
+      value_message(:string, "Major City"),
+      value_message(:int, 1_500_000),
+      value_message(:string, "Small City"),
+      value_message(:string, "12000"),
+      value_message(:string, "capital"),
+      value_message(:string, "Tiny Capital"),
+      value_message(:int, 10_000)
+    ]
+
+    major = feature_message([0, 0, 1, 1, 2, 2], 1, point_commands([{2, 2}]), 1)
+    small = feature_message([0, 0, 1, 3, 2, 4], 1, point_commands([{6, 6}]), 2)
+    duplicate_major = feature_message([0, 0, 1, 1, 2, 2], 1, point_commands([{2, 2}]), 3)
+    tiny_capital = feature_message([0, 5, 1, 6, 2, 7], 1, point_commands([{4, 4}]), 4)
+
+    tile =
+      tile_message([
+        layer_message(
+          "place_labels",
+          [major, small, duplicate_major, tiny_capital],
+          keys,
+          values,
+          8,
+          2
+        )
+      ])
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 6)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert rendered =~ ~s(data-live-map-label-density="regional")
+
+    assert rendered =~
+             ~s(live-map-shortbread-label-priority-1" x="0.25" y="0.25" data-live-map-label-priority="1">Major City)
+
+    assert rendered =~
+             ~s(live-map-shortbread-label-priority-4" x="0.75" y="0.75" data-live-map-label-priority="4">Small City)
+
+    assert rendered =~
+             ~s(live-map-shortbread-label-priority-4" x="0.5" y="0.5" data-live-map-label-priority="4">Tiny Capital)
+
+    assert length(String.split(rendered, ">Major City</text>")) == 2
+  end
+
+  test "prioritizes boundary labels by Shortbread way area" do
+    keys = ["admin_level", "name", "way_area"]
+
+    values = [
+      value_message(:int, 4),
+      value_message(:string, "Large State"),
+      value_message(:double, 150_000_000_000.0),
+      value_message(:string, "Small Province"),
+      value_message(:double, 1_000_000_000.0)
+    ]
+
+    large = feature_message([0, 0, 1, 1, 2, 2], 1, point_commands([{2, 2}]), 1)
+    small = feature_message([0, 0, 1, 3, 2, 4], 1, point_commands([{6, 6}]), 2)
+
+    tile =
+      tile_message([
+        layer_message("boundary_labels", [large, small], keys, values, 8, 2)
+      ])
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 5)
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert rendered =~
+             ~s(live-map-shortbread-label-priority-1" x="0.25" y="0.25" data-live-map-label-priority="1">Large State)
+
+    assert rendered =~
+             ~s(live-map-shortbread-label-priority-4" x="0.75" y="0.75" data-live-map-label-priority="4">Small Province)
   end
 
   test "appends custom Google style CSS after built-in label defaults" do

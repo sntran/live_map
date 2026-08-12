@@ -7,6 +7,59 @@ defmodule LiveMap.StyleTest do
     assert Style.to_css(nil) == ""
   end
 
+  test "detailed base style adds hierarchy before user overrides" do
+    styles = [
+      %{
+        "featureType" => "water",
+        "elementType" => "geometry.fill",
+        "stylers" => [%{"color" => "#123456"}]
+      }
+    ]
+
+    css = Style.to_css(styles, "detailed")
+
+    assert css =~ "/* LiveMap detailed SVG preset */"
+    assert css =~ "live-map-shortbread-label-priority-1"
+    assert css =~ "live-map-detailed-state-boundary-width"
+    assert css =~ ~s(data-live-map-label-density="overview")
+    assert css =~ ~s(data-live-map-label-density="regional")
+    assert css =~ "fill: #123456 !important;"
+
+    assert :binary.match(css, "/* LiveMap detailed SVG preset */") <
+             :binary.match(css, "fill: #123456 !important;")
+  end
+
+  test "colorful base style preserves the existing CSS output" do
+    styles = [%{"featureType" => "water", "stylers" => [%{"color" => "#123456"}]}]
+
+    assert Style.to_css(styles, "colorful") == Style.to_css(styles)
+  end
+
+  test "physical base style layers transparent overview fills after detailed rules" do
+    styles = [%{"featureType" => "water", "stylers" => [%{"color" => "#123456"}]}]
+
+    css = Style.to_css(styles, "physical")
+
+    assert css =~ "/* LiveMap detailed SVG preset */"
+    assert css =~ "/* LiveMap physical SVG overlay preset */"
+    assert css =~ ".live-map-zoom-9"
+    refute css =~ ".live-map-zoom-10"
+    assert css =~ "fill-opacity: 0.12 !important;"
+    assert css =~ "fill: #123456 !important;"
+
+    assert :binary.match(css, "/* LiveMap detailed SVG preset */") <
+             :binary.match(css, "/* LiveMap physical SVG overlay preset */")
+
+    assert :binary.match(css, "/* LiveMap physical SVG overlay preset */") <
+             :binary.match(css, "fill: #123456 !important;")
+  end
+
+  test "rejects unsupported base styles" do
+    assert_raise ArgumentError, ~r/base-style must be one of colorful, detailed, physical/, fn ->
+      Style.to_css([], "satellite")
+    end
+  end
+
   test "to_css processes visibility rules" do
     styles = [
       %{"featureType" => "all", "elementType" => "all", "stylers" => [%{"visibility" => "off"}]}
@@ -52,6 +105,20 @@ defmodule LiveMap.StyleTest do
     assert css =~ ".live-map-shortbread-role-street:not(.live-map-shortbread-shape-text)"
     assert css =~ "stroke: #ff0000 !important;"
     assert css =~ "stroke-width: 2.0px !important;"
+  end
+
+  test "a stroke color does not flatten the base road width hierarchy" do
+    css =
+      Style.to_css([
+        %{
+          "featureType" => "road.highway",
+          "elementType" => "geometry.stroke",
+          "stylers" => [%{"color" => "#c9c9c9"}]
+        }
+      ])
+
+    assert css =~ "stroke: #c9c9c9 !important;"
+    refute css =~ "stroke-width"
   end
 
   test "to_css processes fill colors" do

@@ -181,7 +181,9 @@ source.
 Tile source type is inferred from the URL by default: `.mvt` and `.pbf` URLs are
 treated as vector sources, everything else is treated as raster.
 
-Shortbread MVT sources are server-rendered and support overzoom above level 14:
+Raster and Shortbread MVT sources support overzoom above their `max_zoom` by
+cropping the appropriate parent tile. Shortbread MVT sources are
+server-rendered:
 
 ```elixir
 <.live_component
@@ -202,16 +204,69 @@ Shortbread MVT sources are server-rendered and support overzoom above level 14:
 
 Vector maps use an SVG adaptation of the open source
 [VersaTiles Colorful](https://github.com/versatiles-org/versatiles-style) style
-for Shortbread tiles out of the box. The defaults include its land, water,
-road, building, boundary, and label palette plus a conservative label policy:
-country labels appear first, followed by capitals, cities, towns, and smaller
-places as the map zooms in. State/region labels are held back until zoom 7,
-and dense address and point-of-interest layers are hidden. Shortbread's English
-name is preferred when one is available.
+for Shortbread tiles out of the box (`base-style="colorful"`). The defaults
+include its land, water, road, building, boundary, and label palette plus a
+conservative label policy: country labels appear first, followed by capitals,
+cities, towns, and smaller places as the map zooms in. State/region labels are
+held back until zoom 7, and dense address and point-of-interest layers are
+hidden. Shortbread's English name is preferred when one is available.
 
-The built-in rules are applied before `styles`, so a Google Maps style JSON
-from a service such as Snazzy Maps can recolor the map or explicitly show and
-hide features:
+Use `base-style="detailed"` for a denser overview closer to a conventional
+Google-style basemap. It strengthens the road and administrative-boundary
+hierarchy, distinguishes more land-cover classes, shows state/region labels at
+their earliest useful source zoom, and promotes larger regions plus
+high-population capitals, cities, and towns. Overview and regional zooms use
+progressive label-density tiers based on Shortbread area and population
+metadata. The preset is still server-rendered SVG, so it cannot add details
+that are absent from the source tile or perform MapLibre/Google-style global
+label collision detection.
+
+Use `base-style="physical"` with vector rendering for a Google-like physical
+overview. This hybrid preset renders an NPS Natural Earth physical raster
+underlay beneath the detailed Shortbread roads, boundaries, labels, and LiveMap
+overlays:
+
+```elixir
+<.live_component
+  module={LiveMap}
+  id="physical-map"
+  center="29.7604,-95.3698"
+  zoom={5}
+  rendering-type="vector"
+  base-style="physical"
+/>
+```
+
+The built-in underlay uses Esri's
+[World Physical Map](https://doc.arcgis.com/en/data-appliance/2022/maps/world-physical-map.htm),
+whose source is the U.S. National Park Service. It stays fully visible through
+zoom 6, fades across levels 7–9, crops its maximum zoom-8 parent tiles at level
+9, and is removed at zoom 10 so the normal detailed vector fills take over.
+Source attribution is rendered in the lower-left corner.
+
+To use another physical or terrain service, set `background-tile-source` to an
+absolute raster tile template. Attribution metadata may live on the source or
+be overridden with the component's `attribution` and `attribution-url`
+attributes:
+
+```elixir
+<.live_component
+  module={LiveMap}
+  id="custom-physical-map"
+  rendering-type="vector"
+  base-style="physical"
+  background-tile-source={%{
+    url: "https://tiles.example.com/physical/{z}/{x}/{y}.jpg",
+    max_zoom: 8,
+    attribution: "Example physical tiles",
+    attribution_url: "https://tiles.example.com/terms"
+  }}
+/>
+```
+
+The selected base-style rules are applied before `styles`, so a Google Maps
+style JSON from a service such as Snazzy Maps can recolor the map or explicitly
+show and hide features:
 
 ```elixir
 styles = "priv/map_style.json" |> File.read!() |> Jason.decode!()
@@ -222,6 +277,7 @@ styles = "priv/map_style.json" |> File.read!() |> Jason.decode!()
   center="10.4197639,107.1070841"
   zoom={11}
   rendering-type="vector"
+  base-style="detailed"
   styles={styles}
 />
 ```

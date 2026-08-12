@@ -36,6 +36,45 @@
   </style>
 
   <svg
+    :if={@background_tiles != []}
+    id={"#{@id}-background-tiles"}
+    x="0"
+    y="0"
+    width={@width}
+    height={@height}
+    viewBox={"0 0 #{@width} #{@height}"}
+    preserveAspectRatio="xMidYMid slice"
+    opacity={@background_opacity}
+    data-live-map-background-tiles="true"
+  >
+    <title>Background Tile Layer</title>
+
+    <image
+      :for={tile <- @background_tiles}
+      :if={is_nil(tile[:view_box])}
+      href={tile.href}
+      x={tile.x - @min_x}
+      y={tile.y - @min_y}
+      width={tile.width}
+      height={tile.height}
+    />
+
+    <svg
+      :for={tile <- @background_tiles}
+      :if={not is_nil(tile[:view_box])}
+      x={tile.x - @min_x}
+      y={tile.y - @min_y}
+      width={tile.width}
+      height={tile.height}
+      viewBox={tile.view_box}
+      preserveAspectRatio="none"
+      overflow="hidden"
+    >
+      <image href={tile.href} x="0" y="0" width="256" height="256" />
+    </svg>
+  </svg>
+
+  <svg
     id={"#{@id}-tiles"}
     x="0"
     y="0"
@@ -54,13 +93,27 @@
 
     <image
       :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :image}
+      :if={tile.type == :image and is_nil(tile[:view_box])}
       href={tile.href}
       x={tile.x - @min_x}
       y={tile.y - @min_y}
       width={tile.width}
       height={tile.height}
     />
+
+    <svg
+      :for={tile <- @tile_layer.tiles}
+      :if={tile.type == :image and not is_nil(tile[:view_box])}
+      x={tile.x - @min_x}
+      y={tile.y - @min_y}
+      width={tile.width}
+      height={tile.height}
+      viewBox={tile.view_box}
+      preserveAspectRatio="none"
+      overflow="hidden"
+    >
+      <image href={tile.href} x="0" y="0" width="256" height="256" />
+    </svg>
 
     <svg
       :for={tile <- @tile_layer.tiles}
@@ -218,6 +271,38 @@
       <% end %>
     </g>
   </svg>
+
+  <foreignObject
+    :if={@attribution}
+    x="8"
+    y={@height - 24}
+    width={max(@width - 16, 0)}
+    height="18"
+    overflow="visible"
+    style="pointer-events: none;"
+    class="live-map-attribution"
+  >
+    <div
+      xmlns="http://www.w3.org/1999/xhtml"
+      style="display: flex; align-items: flex-end; width: 100%; height: 100%; font: 10px/14px system-ui, sans-serif; color: #3c4043; pointer-events: none;"
+    >
+      <a
+        :if={@attribution_url}
+        href={@attribution_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        style="display: inline-block; padding: 1px 4px; color: inherit; background: rgb(255 255 255 / 0.82); text-decoration: none; pointer-events: auto;"
+      >
+        {@attribution}
+      </a>
+      <span
+        :if={is_nil(@attribution_url)}
+        style="display: inline-block; padding: 1px 4px; background: rgb(255 255 255 / 0.82); pointer-events: auto;"
+      >
+        {@attribution}
+      </span>
+    </div>
+  </foreignObject>
 
   <g
     :if={@map_controls != []}

@@ -27,6 +27,10 @@ defmodule LiveMap do
      |> assign_new(:height, fn -> 150 end)
      |> assign_new(:title, fn -> "" end)
      |> assign_new(:style, fn -> [] end)
+     |> assign_new(:"base-style", fn -> "colorful" end)
+     |> assign_new(:"background-tile-source", fn -> nil end)
+     |> assign_new(:attribution, fn -> nil end)
+     |> assign_new(:"attribution-url", fn -> nil end)
      |> assign_new(:zoom, fn -> 0 end)
      |> assign_new(:on_bounds_changed, fn -> nil end)
      |> assign_new(:map_controls_expanded?, fn -> false end)
@@ -115,13 +119,30 @@ defmodule LiveMap do
 
   attr(:styles, :list, default: [])
 
+  attr(:"base-style", :string,
+    default: "colorful",
+    values: ["colorful", "detailed", "physical"],
+    doc: ~s(Vector SVG base-style preset: "colorful", "detailed", or hybrid "physical")
+  )
+
   attr(:"rendering-type", :string,
     default: nil,
     doc: ~s(Rendering type enum: "raster" or "vector")
   )
 
   attr(:tile_source, :map, default: nil, doc: "Custom tile source and legacy rendering selector")
+
+  attr(:"background-tile-source", :map,
+    default: nil,
+    doc: "Optional raster tile source rendered beneath the primary tile layer"
+  )
+
+  attr(:attribution, :string, default: nil, doc: "Optional visible map attribution")
+  attr(:"attribution-url", :string, default: nil, doc: "Optional map attribution link")
   attr(:tiles, :list, default: [])
+  attr(:background_tiles, :list, default: [])
+  attr(:background_opacity, :any, default: 0)
+  attr(:attribution_url, :string, default: nil)
   attr(:tile_layer, :map, default: %{defs: [], tiles: []})
   attr(:shape_overlays, :list, default: [])
   attr(:marker_overlays, :list, default: [])
@@ -461,8 +482,12 @@ defmodule LiveMap do
     |> Map.put_new(:center, nil)
     |> Map.put_new(:latitude, nil)
     |> Map.put_new(:longitude, nil)
+    |> Map.put_new(:"base-style", "colorful")
     |> Map.put_new(:"rendering-type", nil)
     |> Map.put_new(:tile_source, nil)
+    |> Map.put_new(:"background-tile-source", nil)
+    |> Map.put_new(:attribution, nil)
+    |> Map.put_new(:"attribution-url", nil)
     |> assign_map_controls()
     |> assign_prepared_layers()
   end
@@ -474,10 +499,14 @@ defmodule LiveMap do
     {latitude, longitude} = center(assigns)
     zoom = parse(assigns[:zoom] || 0, :integer)
     styles = assigns[:styles] || []
+    base_style = assigns[:"base-style"] || "colorful"
     tiles = Tile.map(latitude, longitude, zoom, width, height)
-    css = LiveMap.Style.to_css(styles)
+    css = LiveMap.Style.to_css(styles, base_style)
     {rendering_type, tile_source} = tile_source(assigns)
     tile_cache_context = {tile_source, css}
+
+    {background_tiles, background_opacity, background_tile_source, attribution, attribution_url} =
+      prepare_background_layer(assigns, tiles, base_style, zoom)
 
     needs_new_layer? =
       assigns[:tile_layer] == nil or
@@ -555,11 +584,18 @@ defmodule LiveMap do
       |> Map.put(:height, height)
       |> Map.put(:latitude, latitude)
       |> Map.put(:longitude, longitude)
+      |> Map.put(:"base-style", base_style)
       |> Map.put(:"rendering-type", rendering_type)
       |> Map.put(:zoom, zoom)
       |> Map.put(:min_x, min_x)
       |> Map.put(:min_y, min_y)
       |> Map.put(:tile_source, tile_source)
+      |> Map.put(:"background-tile-source", background_tile_source)
+      |> Map.put(:background_tiles, background_tiles)
+      |> Map.put(:background_opacity, background_opacity)
+      |> Map.put(:attribution, attribution)
+      |> Map.put(:"attribution-url", attribution_url)
+      |> Map.put(:attribution_url, attribution_url)
       |> Map.put(:tiles, tiles)
       |> Map.put(:computed_css, css)
       |> Map.put(:rendered_tile_source, tile_source)
@@ -587,6 +623,39 @@ defmodule LiveMap do
 
     put_assigns(socket_or_assigns, base_assigns)
   end
+
+  defp prepare_background_layer(assigns, tiles, base_style, zoom) do
+    source =
+      assigns[:"background-tile-source"] ||
+        if(base_style == "physical", do: Tile.default_physical_source())
+
+    opacity = background_opacity(source, base_style, zoom)
+
+    case source do
+      nil ->
+        {[], 0, nil, assigns[:attribution], assigns[:"attribution-url"]}
+
+      source ->
+        layer = Tile.prepare_layer(if(opacity > 0, do: tiles, else: []), source)
+
+        if layer.source.type != :raster do
+          raise ArgumentError, "background-tile-source must be a raster tile source"
+        end
+
+        attribution = assigns[:attribution] || layer.source[:attribution]
+        attribution_url = assigns[:"attribution-url"] || layer.source[:attribution_url]
+
+        {layer.tiles, opacity, layer.source, attribution, attribution_url}
+    end
+  end
+
+  defp background_opacity(nil, _base_style, _zoom), do: 0
+  defp background_opacity(_source, base_style, _zoom) when base_style != "physical", do: 1
+  defp background_opacity(_source, _base_style, zoom) when zoom <= 6, do: 1
+  defp background_opacity(_source, _base_style, 7), do: 0.88
+  defp background_opacity(_source, _base_style, 8), do: 0.72
+  defp background_opacity(_source, _base_style, 9), do: 0.42
+  defp background_opacity(_source, _base_style, _zoom), do: 0
 
   defp shape_overlays(
          %{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom} = assigns,

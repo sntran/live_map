@@ -20,7 +20,9 @@ defmodule LiveMap.Tile do
           required(:url) => String.t(),
           required(:headers) => [{String.t(), String.t()}],
           optional(:version) => String.t() | nil,
-          optional(:max_zoom) => non_neg_integer() | nil
+          optional(:max_zoom) => non_neg_integer() | nil,
+          optional(:attribution) => String.t(),
+          optional(:attribution_url) => String.t()
         }
   @type prepared_tile_layer :: %{
           required(:source) => source(),
@@ -72,6 +74,17 @@ defmodule LiveMap.Tile do
     max_zoom: 14,
     headers: []
   }
+  @default_physical_source %{
+    type: :raster,
+    url:
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}",
+    version: nil,
+    max_zoom: 8,
+    headers: [],
+    attribution:
+      "Physical map: U.S. National Park Service · Map data © OpenStreetMap contributors",
+    attribution_url: "https://goto.arcgisonline.com/maps/World_Physical_Map"
+  }
   @default_mvt_max_zoom 14
   @default_vector_tile_cache_size 64
   @default_user_agent "LiveMap/#{Application.spec(:live_map, :vsn) || "dev"}"
@@ -100,6 +113,21 @@ defmodule LiveMap.Tile do
   """
   @spec default_vector_source() :: source()
   def default_vector_source, do: @default_vector_source
+
+  @doc """
+  Returns the default Web Mercator physical raster underlay.
+
+  The source is the U.S. National Park Service Natural Earth physical map
+  published through ArcGIS Online.
+
+  Examples:
+
+      iex> LiveMap.Tile.default_physical_source().type
+      :raster
+
+  """
+  @spec default_physical_source() :: source()
+  def default_physical_source, do: @default_physical_source
 
   @doc """
   Retrieves a tile at certain coordinates and zoom level.
@@ -455,18 +483,39 @@ defmodule LiveMap.Tile do
   end
 
   defp prepare_raster_tile(tile, source) do
-    n = 1 <<< tile.z
-    fetch_x = rem(rem(tile.x, n) + n, n)
-    fetch_y = tile.y
+    source_zoom = min(tile.z, source.max_zoom || tile.z)
+    overzoom_levels = tile.z - source_zoom
+    overzoom_scale = 1 <<< overzoom_levels
 
-    %{
+    n = 1 <<< tile.z
+    display_x = rem(rem(tile.x, n) + n, n)
+    display_y = tile.y
+    source_x = div(display_x, overzoom_scale)
+    source_y = div(display_y, overzoom_scale)
+
+    tile = %{
       type: :image,
       x: tile.x * 256,
       y: tile.y * 256,
       width: 256,
       height: 256,
-      href: expand_url(source, %{tile | x: fetch_x, y: fetch_y})
+      href: expand_url(source, %{x: source_x, y: source_y, z: source_zoom})
     }
+
+    case raster_child_view_box(display_x, display_y, overzoom_scale) do
+      nil -> tile
+      view_box -> Map.put(tile, :view_box, view_box)
+    end
+  end
+
+  defp raster_child_view_box(_x, _y, 1), do: nil
+
+  defp raster_child_view_box(x, y, overzoom_scale) do
+    child_size = 256 / overzoom_scale
+    child_x = rem(x, overzoom_scale) * child_size
+    child_y = rem(y, overzoom_scale) * child_size
+
+    Enum.map_join([child_x, child_y, child_size, child_size], " ", &format_number/1)
   end
 
   defp build_vector_requests(tiles, source, custom_css) do
@@ -714,17 +763,50 @@ defmodule LiveMap.Tile do
     version = source[:version] || source["version"]
     max_zoom = source[:max_zoom] || source["max_zoom"]
     headers = normalize_headers(source[:headers] || source["headers"] || [])
+    attribution = source[:attribution] || source["attribution"]
+    attribution_url = source[:attribution_url] || source["attribution_url"]
     normalized_type = normalize_type(type)
 
-    normalized_source = %{
-      type: normalized_type,
-      url: normalized_url,
-      version: normalize_version(version),
-      max_zoom: normalize_max_zoom(max_zoom, normalized_type),
-      headers: headers
-    }
+    normalized_source =
+      %{
+        type: normalized_type,
+        url: normalized_url,
+        version: normalize_version(version),
+        max_zoom: normalize_max_zoom(max_zoom, normalized_type),
+        headers: headers
+      }
+      |> maybe_put_source_text(:attribution, attribution)
+      |> maybe_put_source_url(:attribution_url, attribution_url)
 
     validate_source!(normalized_source)
+  end
+
+  defp maybe_put_source_text(source, _key, nil), do: source
+
+  defp maybe_put_source_text(source, key, value) when is_binary(value) and value != "",
+    do: Map.put(source, key, value)
+
+  defp maybe_put_source_text(_source, key, value) do
+    raise ArgumentError, "source.#{key} must be a non-empty string, got: #{inspect(value)}"
+  end
+
+  defp maybe_put_source_url(source, _key, nil), do: source
+
+  defp maybe_put_source_url(source, key, value) do
+    value = normalize_url(value)
+    validate_absolute_http_url!(value)
+    Map.put(source, key, value)
+  end
+
+  defp validate_absolute_http_url!(value) do
+    uri = URI.parse(value)
+
+    unless uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != "" do
+      raise ArgumentError,
+            "source.attribution_url must be an absolute http(s) URL, got: #{inspect(value)}"
+    end
+
+    value
   end
 
   defp expand_url(source, tile) do

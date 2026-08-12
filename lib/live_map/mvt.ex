@@ -514,6 +514,7 @@ defmodule LiveMap.MVT do
     id_prefix = Keyword.get(opts, :id_prefix, hash)
     custom_css = Keyword.get(opts, :custom_css, "")
     zoom = Keyword.get(opts, :zoom, 0)
+    label_density = label_density(zoom)
     clip_id = "live-map-mvt-clip-#{id_prefix}"
     css = Enum.join([tile_css(), default_label_css(zoom), custom_css], "\n")
 
@@ -534,6 +535,8 @@ defmodule LiveMap.MVT do
        Integer.to_string(zoom),
        "\" data-live-map-tile-format=\"mvt\" data-live-map-zoom=\"",
        Integer.to_string(zoom),
+       "\" data-live-map-label-density=\"",
+       label_density,
        "\">",
        "<defs><clipPath id=\"",
        clip_id,
@@ -567,7 +570,11 @@ defmodule LiveMap.MVT do
         Map.get(feature.properties, "name")
 
     if name do
-      %{named_points: Enum.map(points, &{name, normalize_point(&1, extent)})}
+      priority = label_priority(feature)
+
+      %{
+        named_points: Enum.map(points, &{name, normalize_point(&1, extent), priority})
+      }
     else
       %{points: Enum.map(points, &normalize_point(&1, extent))}
     end
@@ -676,20 +683,111 @@ defmodule LiveMap.MVT do
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" ")
 
-    Enum.map(named_points, fn {name, {x, y}} ->
+    named_points
+    |> deduplicate_named_points()
+    |> Enum.map(fn {name, {x, y}, priority} ->
       [
         "<text class=\"",
         classes,
+        " live-map-shortbread-label-priority-",
+        Integer.to_string(priority),
         "\" x=\"",
         to_string(x),
         "\" y=\"",
         to_string(y),
+        "\" data-live-map-label-priority=\"",
+        Integer.to_string(priority),
         "\">",
         escape_text(name),
         "</text>"
       ]
     end)
   end
+
+  defp deduplicate_named_points(named_points) do
+    named_points
+    |> Enum.reduce([], fn {name, {x, y}, _priority} = candidate, accepted ->
+      duplicate? =
+        Enum.any?(accepted, fn
+          {^name, {accepted_x, accepted_y}, _priority} ->
+            abs(x - accepted_x) <= 0.01 and abs(y - accepted_y) <= 0.01
+
+          _other ->
+            false
+        end)
+
+      if duplicate?, do: accepted, else: [candidate | accepted]
+    end)
+    |> Enum.reverse()
+  end
+
+  defp label_priority(feature) do
+    properties = feature.properties
+    kind = feature_kind(properties)
+    admin_level = integer_property(Map.get(properties, "admin_level"))
+    population = integer_property(Map.get(properties, "population")) || 0
+    way_area = integer_property(Map.get(properties, "way_area")) || 0
+
+    cond do
+      feature.layer == "boundary_labels" and admin_level == 2 ->
+        area_priority(way_area, 100_000_000_000, 25_000_000_000, 5_000_000_000)
+
+      feature.layer == "boundary_labels" and admin_level == 4 ->
+        area_priority(way_area, 100_000_000_000, 25_000_000_000, 5_000_000_000)
+
+      kind == "capital" ->
+        population_priority(population, 1_000_000, 500_000, 100_000)
+
+      kind == "state_capital" ->
+        population_priority(population, 500_000, 250_000, 100_000)
+
+      population >= 1_000_000 ->
+        1
+
+      population >= 250_000 ->
+        2
+
+      population >= 50_000 ->
+        3
+
+      true ->
+        4
+    end
+  end
+
+  defp area_priority(area, priority_1, priority_2, priority_3) do
+    cond do
+      area >= priority_1 -> 1
+      area >= priority_2 -> 2
+      area >= priority_3 -> 3
+      true -> 4
+    end
+  end
+
+  defp population_priority(population, priority_1, priority_2, priority_3) do
+    cond do
+      population >= priority_1 -> 1
+      population >= priority_2 -> 2
+      population >= priority_3 -> 3
+      true -> 4
+    end
+  end
+
+  defp label_density(zoom) when zoom <= 5, do: "overview"
+  defp label_density(6), do: "regional"
+  defp label_density(_zoom), do: "standard"
+
+  defp integer_property(value) when is_integer(value), do: value
+  defp integer_property(value) when is_float(value), do: trunc(value)
+
+  defp integer_property(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _other -> nil
+    end
+  end
+
+  defp integer_property(_value), do: nil
 
   defp escape_text(text) do
     text
