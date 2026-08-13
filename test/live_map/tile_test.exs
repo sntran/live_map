@@ -98,6 +98,37 @@ defmodule LiveMap.TileTest do
            ]
   end
 
+  test "prepare_layer infers SVG image sources and accepts root-relative URLs" do
+    layer =
+      Tile.prepare_layer(
+        [%{x: 1, y: 2, z: 3}],
+        %{url: "/vector/{zoom}/{x}/{y}.svg?profile=v1", max_zoom: 2}
+      )
+
+    assert layer.source.type === :svg
+
+    assert layer.tiles === [
+             %{
+               type: :svg_image,
+               display_tile: "3/1/2",
+               x: 256,
+               y: 512,
+               width: 256,
+               height: 256,
+               href: "/vector/2/0/1.svg?profile=v1",
+               view_box: "128 0 128 128"
+             }
+           ]
+
+    explicit =
+      Tile.prepare_layer([], %{
+        type: "svg",
+        url: "https://tiles.example.com/{z}/{x}/{y}"
+      })
+
+    assert explicit.source.type === :svg
+  end
+
   test "prepare_layer preserves source attribution metadata" do
     layer =
       Tile.prepare_layer([], %{
@@ -181,7 +212,10 @@ defmodule LiveMap.TileTest do
       {%{url: 123}, ~r/source.url must be a non-empty string/},
       {%{url: "ftp://tiles.example.com/{z}/{x}/{y}.png"},
        ~r/source.url must be an absolute http\(s\) URL/},
-      {%{url: "/{z}/{x}/{y}.png"}, ~r/source.url must be an absolute http\(s\) URL/},
+      {%{url: "tiles/{z}/{x}/{y}.png"}, ~r/source.url must be an absolute http\(s\) URL/},
+      {%{url: "//tiles.example.com/{z}/{x}/{y}.png"},
+       ~r/source.url must be an absolute http\(s\) URL/},
+      {%{url: "/{z}/{x}/{y}.mvt"}, ~r/MVT source.url must be an absolute http\(s\) URL/},
       {%{url: "https://tiles.example.com/{x}/{y}.png"},
        ~r/source.url must include a zoom placeholder/},
       {%{url: "https://tiles.example.com/{z}/{y}.png"},

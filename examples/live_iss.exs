@@ -2,7 +2,7 @@
 #
 # A single-file LiveView that polls the Where the ISS at API every 3 seconds
 # to track the International Space Station, rendering a live polyline trail
-# over Shortbread vector tiles.
+# over compressed, server-rendered Shortbread SVG tiles.
 #
 # Run:    elixir examples/live_iss.exs
 # Open:   http://localhost:4000
@@ -163,7 +163,7 @@ defmodule LiveISS do
     curve ++ bottom_edge
   end
 
-  defp get_style(name) do
+  def map_style(name) do
     filename =
       name
       |> String.downcase()
@@ -176,6 +176,15 @@ defmodule LiveISS do
       {:ok, content} -> Phoenix.json_library().decode!(content)
       {:error, _} -> []
     end
+  end
+
+  defp vector_tile_source(style) do
+    slug =
+      style
+      |> String.downcase()
+      |> String.replace(" ", "-")
+
+    %{url: "/vector/#{slug}/{zoom}/{x}/{y}.svg"}
   end
 
   def render(assigns) do
@@ -214,8 +223,8 @@ defmodule LiveISS do
           zoom={@zoom}
           width={800}
           height={600}
-          rendering-type="vector"
-          styles={get_style(@selected_style)}
+          tile_source={vector_tile_source(@selected_style)}
+          styles={map_style(@selected_style)}
         >
           <:style>{"
             /* Night Terminator layer */
@@ -266,4 +275,50 @@ defmodule LiveISS do
   end
 end
 
-PhoenixPlayground.start(live: LiveISS, open_browser: false, live_reload: false)
+defmodule LiveISSRouter do
+  use Phoenix.Router
+
+  import Phoenix.LiveView.Router
+
+  pipeline :browser do
+    plug(:accepts, ["html"])
+    plug(:fetch_session)
+    plug(:put_root_layout, html: {PhoenixPlayground.Layout, :root})
+    plug(:put_secure_browser_headers)
+  end
+
+  scope "/" do
+    pipe_through(:browser)
+
+    live("/", LiveISS)
+  end
+
+  forward("/vector/midnight-commander", LiveMap.VectorTile.Plug,
+    source: LiveMap.Tile.default_vector_source(),
+    base_style: "colorful",
+    styles: LiveISS.map_style("Midnight Commander"),
+    max_display_zoom: 22,
+    max_age: 86_400,
+    compress: true
+  )
+
+  forward("/vector/blue-water", LiveMap.VectorTile.Plug,
+    source: LiveMap.Tile.default_vector_source(),
+    base_style: "colorful",
+    styles: LiveISS.map_style("Blue Water"),
+    max_display_zoom: 22,
+    max_age: 86_400,
+    compress: true
+  )
+
+  forward("/vector/pale-dawn", LiveMap.VectorTile.Plug,
+    source: LiveMap.Tile.default_vector_source(),
+    base_style: "colorful",
+    styles: LiveISS.map_style("Pale Dawn"),
+    max_display_zoom: 22,
+    max_age: 86_400,
+    compress: true
+  )
+end
+
+PhoenixPlayground.start(plug: LiveISSRouter, open_browser: false, live_reload: false)

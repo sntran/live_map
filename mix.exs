@@ -56,7 +56,7 @@ defmodule LiveMap.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:crypto, :logger]
     ]
   end
 
@@ -71,7 +71,8 @@ defmodule LiveMap.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:phoenix_live_view, ">= 0.19.0 and < 2.0.0"},
+      {:phoenix, ">= 1.8.0 and < 2.0.0", optional: true},
+      {:phoenix_live_view, ">= 1.1.0 and < 2.0.0"},
       {:jason, "~> 1.4"},
       {:req, "~> 0.6.2", optional: true},
 

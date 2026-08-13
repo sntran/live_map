@@ -94,8 +94,9 @@ defmodule LiveMap.CLI do
 
   defp normalize_tile_format(nil), do: nil
   defp normalize_tile_format("raster"), do: :raster
+  defp normalize_tile_format("svg"), do: :svg
   defp normalize_tile_format("mvt"), do: :mvt
-  defp normalize_tile_format(format) when format in [:raster, :mvt], do: format
+  defp normalize_tile_format(format) when format in [:raster, :svg, :mvt], do: format
 
   defp normalize_tile_format(format) do
     raise ArgumentError, "unsupported tile format: #{inspect(format)}"

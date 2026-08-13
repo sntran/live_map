@@ -4,6 +4,7 @@ defmodule LiveMap.VectorTileTest do
   import Phoenix.LiveViewTest, only: [render_component: 2]
 
   alias LiveMap.Tile
+  alias LiveMap.VectorTile
 
   setup do
     original_user_agent = Application.get_env(:live_map, :tile_user_agent)
@@ -54,6 +55,25 @@ defmodule LiveMap.VectorTileTest do
     refute Floki.find(document, "image") |> Enum.any?()
     assert [_] = Floki.find(document, "defs svg[data-live-map-source-tile='0/0/0']")
     assert [_] = Floki.find(document, "svg[data-live-map-tile-state='ready'] use")
+  end
+
+  test "renders a standalone SVG with default style and identifier options", %{server: server} do
+    LiveMap.TestTileServer.put_responses(server, "/0/0/0.mvt", [
+      {200, [{"cache-control", "max-age=60"}], shortbread_tile()}
+    ])
+
+    assert {:ok, rendered} =
+             VectorTile.render(%{url: server.base_url <> "/{z}/{x}/{y}.mvt"}, 0, 0, 0)
+
+    assert rendered =~ ~s(viewBox="0 0 1 1")
+    assert rendered =~ "live-map-vector-tile-"
+    assert rendered =~ "live-map-shortbread-role-water"
+  end
+
+  test "standalone renderer rejects non-MVT sources" do
+    assert_raise ArgumentError, ~r/requires an MVT tile source/, fn ->
+      VectorTile.render(%{url: "https://tiles.example.com/{z}/{x}/{y}.png"}, 0, 0, 0)
+    end
   end
 
   test "renders per-tile error placeholders when vector fetches fail", %{server: server} do

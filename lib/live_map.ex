@@ -26,6 +26,7 @@ defmodule LiveMap do
      |> assign_new(:width, fn -> 300 end)
      |> assign_new(:height, fn -> 150 end)
      |> assign_new(:title, fn -> "" end)
+     |> assign_new(:script_csp_nonce, fn -> nil end)
      |> assign_new(:style, fn -> [] end)
      |> assign_new(:"base-style", fn -> "colorful" end)
      |> assign_new(:"background-tile-source", fn -> nil end)
@@ -103,6 +104,11 @@ defmodule LiveMap do
   attr(:height, :any, default: 150)
   attr(:title, :string, default: "")
 
+  attr(:script_csp_nonce, :string,
+    default: nil,
+    doc: "Optional CSP nonce for the built-in runtime SVG tile hook"
+  )
+
   attr(:center, :any,
     default: nil,
     doc: ~s(Map center as "latitude,longitude", a tuple, or a map with :lat and :lng)
@@ -130,7 +136,10 @@ defmodule LiveMap do
     doc: ~s(Rendering type enum: "raster" or "vector")
   )
 
-  attr(:tile_source, :map, default: nil, doc: "Custom tile source and legacy rendering selector")
+  attr(:tile_source, :map,
+    default: nil,
+    doc: "Custom raster, standalone SVG, or MVT tile source"
+  )
 
   attr(:"background-tile-source", :map,
     default: nil,
@@ -189,6 +198,19 @@ defmodule LiveMap do
 
   @impl Phoenix.LiveComponent
   def render(assigns), do: live_map(prepare_render_assigns(assigns))
+
+  defp svg_tile_content(assigns) do
+    ~H"""
+    <g
+      id={"#{@map_id}-svg-tile-content-#{String.replace(@tile.display_tile, "/", "-")}"}
+      phx-hook=".SVGTile"
+      phx-update="ignore"
+      data-svg-href={@tile.href}
+    >
+      <image href={@tile.href} x="0" y="0" width="256" height="256" />
+    </g>
+    """
+  end
 
   @impl Phoenix.LiveComponent
   @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
@@ -468,6 +490,7 @@ defmodule LiveMap do
     |> Map.put_new(:width, 300)
     |> Map.put_new(:height, 150)
     |> Map.put_new(:title, "")
+    |> Map.put_new(:script_csp_nonce, nil)
     |> Map.put_new(:style, [])
     |> Map.put_new(:zoom, 0)
     |> Map.put_new(:on_bounds_changed, nil)
@@ -590,6 +613,7 @@ defmodule LiveMap do
       |> Map.put(:min_x, min_x)
       |> Map.put(:min_y, min_y)
       |> Map.put(:tile_source, tile_source)
+      |> Map.put(:svg_tile_source?, tile_source.type == :svg)
       |> Map.put(:"background-tile-source", background_tile_source)
       |> Map.put(:background_tiles, background_tiles)
       |> Map.put(:background_opacity, background_opacity)
@@ -717,7 +741,7 @@ defmodule LiveMap do
     do: {"vector", Tile.default_vector_source()}
 
   defp tile_source(%{"rendering-type": nil} = assigns) do
-    {nil, Map.get(assigns, :tile_source) || Tile.default_source()}
+    {nil, assigns |> Map.get(:tile_source) |> Tile.normalize_source()}
   end
 
   defp tile_source(assigns) do

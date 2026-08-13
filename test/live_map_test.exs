@@ -500,6 +500,38 @@ defmodule LiveMapTest do
       assert updated.assigns.tile_source === LiveMap.Tile.default_source()
     end
 
+    test "renders SVG tile fallbacks with the built-in runtime hook and nonce" do
+      rendered =
+        component(
+          width: 256,
+          height: 256,
+          zoom: 0,
+          styles: [%{"featureType" => "water", "stylers" => [%{"color" => "#123456"}]}],
+          script_csp_nonce: "nonce-value",
+          tile_source: %{url: "/vector/{zoom}/{x}/{y}.svg"}
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+
+      assert [tile] = Floki.find(document, "svg[data-live-map-display-tile='0/0/0']")
+      assert Floki.attribute(tile, "id") === ["live-map-svg-tile-0-0-0"]
+
+      assert [content] = Floki.find(tile, "g[data-svg-href='/vector/0/0/0.svg']")
+      assert Floki.attribute(content, "phx-update") === ["ignore"]
+      assert Floki.attribute(content, "phx-hook") === ["LiveMap.SVGTile"]
+      assert [_fallback] = Floki.find(content, "image[href='/vector/0/0/0.svg']")
+
+      assert [hook] = Floki.find(document, "script[data-phx-runtime-hook='LiveMap.SVGTile']")
+      assert Floki.attribute(hook, "nonce") === ["nonce-value"]
+      assert rendered =~ "live-map-svg-tiles-v1"
+      assert rendered =~ "AbortController"
+
+      assert :binary.match(rendered, ~s(id="live-map-tiles")) <
+               :binary.match(rendered, ~s(data-live-map-tile-overrides="true"))
+
+      assert rendered =~ "#123456"
+    end
+
     test "rejects unsupported rendering types" do
       assert_raise ArgumentError, ~r/rendering-type must be/, fn ->
         component([{:"rendering-type", "terrain"}])

@@ -3,7 +3,7 @@
 # A single-file LiveView that visualizes tectonic plates (polygons),
 # plate boundaries (polylines), and recent M4.5+ earthquakes (markers).
 # It also includes a toggle to demonstrate the difference between
-# raster (OSM default) and vector (Shortbread) tile maps.
+# raster (OSM default) and server-rendered SVG (Shortbread) tile maps.
 #
 # Run:    elixir examples/live_earthquakes.exs
 # Open:   http://localhost:4000/?zoom=3&center=0,0&rendering-type=vector
@@ -203,7 +203,7 @@ defmodule LiveEarthquakes do
         <h2>Global Earthquakes & Tectonic Plates 🌍</h2>
         <p style="color: #666; font-size: 14px;">
           Visualizing recent M4.5+ earthquakes (markers), plate boundaries (polylines), and tectonic plates (polygons).
-          Vector mode uses LiveMap's built-in VersaTiles Colorful adaptation and zoom-aware labels.
+          Vector mode uses cacheable, compressed SVG tiles rendered from LiveMap's VersaTiles Colorful adaptation.
         </p>
 
         <form phx-change="toggle_rendering_type" style="margin-top: 15px;">
@@ -232,7 +232,11 @@ defmodule LiveEarthquakes do
           zoom={@zoom}
           width={900}
           height={600}
-          rendering-type={@rendering_type}
+          tile_source={
+            if @rendering_type == "vector",
+              do: %{url: "/vector/{zoom}/{x}/{y}.svg"}
+          }
+          rendering-type={if @rendering_type == "raster", do: "raster"}
           on_bounds_changed={&notify_bounds_changed/1}
         >
           <:map_control action="pan-up">
@@ -397,4 +401,36 @@ defmodule LiveEarthquakes do
   end
 end
 
-PhoenixPlayground.start(live: LiveEarthquakes, open_browser: false, live_reload: false)
+defmodule LiveEarthquakesRouter do
+  use Phoenix.Router
+
+  import Phoenix.LiveView.Router
+
+  pipeline :browser do
+    plug(:accepts, ["html"])
+    plug(:fetch_session)
+    plug(:put_root_layout, html: {PhoenixPlayground.Layout, :root})
+    plug(:put_secure_browser_headers)
+  end
+
+  scope "/" do
+    pipe_through(:browser)
+
+    live("/", LiveEarthquakes)
+  end
+
+  forward("/vector", LiveMap.VectorTile.Plug,
+    source: LiveMap.Tile.default_vector_source(),
+    base_style: "colorful",
+    styles: [],
+    max_display_zoom: 22,
+    max_age: 86_400,
+    compress: true
+  )
+end
+
+PhoenixPlayground.start(
+  plug: LiveEarthquakesRouter,
+  open_browser: false,
+  live_reload: false
+)

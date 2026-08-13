@@ -3,16 +3,17 @@
 A [Phoenix LiveView](https://github.com/phoenixframework/phoenix_live_view)
 Component for displaying an interactive map with dynamic data.
 
-The library is tested on Elixir 1.16+ and Phoenix LiveView 1.1.
+The library requires Elixir 1.16+, Phoenix 1.8+, and Phoenix LiveView 1.1+.
 
 By rendering the map on the server, it avoids the client-side map libraries
 for simple mapping needs. Utilizing LiveView, we can also update map data on
 the server, and let the browser do what it does best—rendering markup.
 
-The map is rendered as an SVG. Raster sources are emitted as `<image>` tiles by
-default, while Shortbread-compatible vector sources are fetched and decoded on
-the server into nested SVG tiles. All the transforms are natively handled by
-the browser for SVG.
+The map is rendered as an SVG. Raster and standalone SVG sources are emitted as
+`<image>` tiles, while Shortbread-compatible vector sources are fetched and
+decoded on the server into nested SVG tiles. LiveMap progressively injects
+standalone SVG tiles so page-level CSS can style them; the external image
+remains the no-JavaScript fallback.
 
 Please consult and follow [usage policies](https://operations.osmfoundation.org/policies/tiles/)
 of the tile servers.
@@ -179,7 +180,8 @@ servers. If both attributes are supplied, `rendering-type` selects the built-in
 source.
 
 Tile source type is inferred from the URL by default: `.mvt` and `.pbf` URLs are
-treated as vector sources, everything else is treated as raster.
+treated as MVT sources, `.svg` URLs are treated as standalone SVG sources, and
+everything else is treated as raster.
 
 Raster and Shortbread MVT sources support overzoom above their `max_zoom` by
 cropping the appropriate parent tile. Shortbread MVT sources are
@@ -199,6 +201,93 @@ server-rendered:
   }}
 />
 ```
+
+### Standalone SVG tile sources
+
+Point `tile_source` at a display-ready SVG tile endpoint to keep tile bytes out
+of LiveView diffs:
+
+```elixir
+<.live_component
+  module={LiveMap}
+  id="svg-map"
+  center="10.4197639,107.1070841"
+  zoom={11}
+  base-style="detailed"
+  styles={@map_styles}
+  tile_source={%{
+    url: "/vector/{zoom}/{x}/{y}.svg",
+    attribution: "© OpenStreetMap contributors"
+  }}
+/>
+```
+
+Do not also set `rendering-type`: when present, it intentionally selects one of
+LiveMap's built-in sources instead of `tile_source`. Root-relative URLs are
+accepted for raster and SVG browser-loaded tiles. Server-fetched MVT sources
+must remain absolute HTTP(S) URLs.
+
+The external SVG is always rendered through `<image>` first. LiveMap's built-in
+runtime colocated hook fetches the same URL, uses the browser Cache API according
+to its HTTP freshness headers, scopes SVG IDs, and injects it into the page. No
+asset import or custom hook setup is required. Disabled JavaScript, blocked
+scripts, failed requests, and invalid SVG retain the image fallback.
+
+> **Security:** Injected SVG is trusted application code. LiveMap deliberately
+> does not sanitize it; elements, attributes, scripts, styles, and external
+> references are preserved apart from collision-safe fragment rewriting. Never
+> point an SVG tile source at content an untrusted party can control.
+
+Strict `script-src` Content Security Policies must supply the same per-response
+nonce used by the application:
+
+```elixir
+<.live_component
+  module={LiveMap}
+  id="svg-map"
+  tile_source={%{url: "/vector/{z}/{x}/{y}.svg"}}
+  script_csp_nonce={@script_csp_nonce}
+/>
+```
+
+Cross-origin SVGs need CORS permission for injection even when the browser can
+display them as an image. A CORS failure simply preserves that image. Browser
+image requests cannot apply `tile_source.headers`; use a same-origin proxy such
+as `LiveMap.VectorTile.Plug` when upstream credentials or headers are required.
+
+#### Optional MVT-to-SVG Plug
+
+Applications without an existing SVG tile service can mount the included Plug:
+
+```elixir
+# router.ex
+forward "/vector", LiveMap.VectorTile.Plug,
+  source: LiveMap.Tile.default_vector_source(),
+  base_style: "detailed",
+  styles: [],
+  max_display_zoom: 22,
+  max_age: 86_400,
+  compress: true
+```
+
+The route accepts `GET` and `HEAD` at `/{zoom}/{x}/{y}.svg`, validates tile
+coordinates, fetches only the MVT source fixed in the router configuration,
+and returns standalone SVG with `Cache-Control` and ETag validators. Gzip
+content negotiation is enabled by default, with `Vary: Accept-Encoding` and a
+representation-specific ETag; set `compress: false` when a reverse proxy should
+own compression instead. Above the source's `max_zoom`, the Plug fetches and
+crops the appropriate parent while styling labels for the requested display
+zoom. The optional Req dependency is required.
+
+The Plug does not retain rendered tiles in process. Applications can place it
+behind their preferred reverse-proxy, CDN, or Plug cache. A wrapper Plug can
+also initialize `LiveMap.VectorTile.Plug` once and call it after checking its
+own cache.
+
+The Plug's `base_style` and `styles` produce the complete no-JavaScript tile.
+Pass the same choices to LiveMap when the injected result should have matching
+page-level overrides. Use versioned endpoint URLs whenever a long-lived style
+or source profile changes.
 
 ### Built-in vector style
 
@@ -288,7 +377,8 @@ example remain available for smaller overrides without a style JSON.
 
 The tile source URL may use `{zoom}` or `{z}`, plus `{x}`, `{y}`, `{version}`,
 and `$VERSION` placeholders. `version` is only required when the URL contains a
-version placeholder. Only absolute `http` and `https` URLs are accepted.
+version placeholder. Absolute HTTP(S) URLs are accepted for every source;
+root-relative URLs are also accepted for browser-loaded raster and SVG sources.
 
 If you use vector sources from another application, include the optional Req
 dependency there as well:
@@ -356,10 +446,21 @@ To emit self-contained vector SVG, point the CLI at an MVT source:
 ## Operational Notes
 
 - Vector tile rendering moves tile fetching and decoding onto your server. Treat `tile_source` as trusted application configuration, not as untrusted request input.
+- Injected SVG becomes active page DOM. LiveMap intentionally does not sanitize it and preserves embedded elements, styles, scripts, and references while rewriting local IDs. Only inject SVG endpoints you trust as application code; an untrusted source can create an XSS vulnerability.
+- `LiveMap.VectorTile.Plug` never accepts an upstream source from request parameters. Keep its configured source URL and headers trusted, version styles in the endpoint URL, and place a CDN or reverse proxy in front when appropriate.
 - LiveMap fetches vector tiles through Req and enables Req's HTTP cache for repeated requests.
 - Remote tile sources can increase server load and can expose SSRF risks if you allow untrusted users to control URLs or headers.
 - Continue to display proper OpenStreetMap attribution and follow the upstream tile usage policies for whatever raster or vector service you configure.
 - The OpenStreetMap vector service at `vector.openstreetmap.org` requires a valid identifying User-Agent, local caching, and no `no-cache` request headers. Review the current policy before shipping against it.
+
+Manual SVG enhancement smoke checks:
+
+- Load an SVG map normally and confirm the nested tile SVGs receive page-level style overrides.
+- Disable JavaScript and confirm the endpoint-styled `<image>` tiles remain visible.
+- Pan and zoom rapidly and confirm obsolete requests are aborted without replacing newer tiles.
+- Pan across the antimeridian and confirm repeated wrapped tiles have unique scoped IDs.
+- Test strict CSP with a matching `script_csp_nonce`, then without it to verify fallback behavior.
+- Test a CORS-enabled cross-origin source and a blocked source; the latter must retain `<image>`.
 
 ## Installation
 

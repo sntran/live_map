@@ -14,7 +14,7 @@ defmodule LiveMap.Tile do
   @type zoom :: non_neg_integer()
   @type x :: non_neg_integer()
   @type y :: non_neg_integer()
-  @type source_type :: :raster | :mvt
+  @type source_type :: :raster | :svg | :mvt
   @type source :: %{
           required(:type) => source_type(),
           required(:url) => String.t(),
@@ -128,6 +128,24 @@ defmodule LiveMap.Tile do
   """
   @spec default_physical_source() :: source()
   def default_physical_source, do: @default_physical_source
+
+  @doc false
+  @spec fetch_vector_tile(source(), %{
+          required(:x) => x(),
+          required(:y) => y(),
+          required(:z) => zoom()
+        }) ::
+          {:ok, binary()} | {:error, term()}
+  def fetch_vector_tile(source, %{x: _x, y: _y, z: _z} = tile) do
+    source = normalize_source(source)
+
+    if source.type != :mvt do
+      raise ArgumentError, "fetch_vector_tile/2 requires an MVT tile source"
+    end
+
+    ensure_req!()
+    fetch_vector_body(expand_url(source, tile), source.headers)
+  end
 
   @doc """
   Retrieves a tile at certain coordinates and zoom level.
@@ -328,8 +346,8 @@ defmodule LiveMap.Tile do
   Normalizes a tile source and prepares renderable tile layer data.
 
   Raster sources are expanded into `<image>` tile entries. Vector sources are
-  fetched with Req, decoded through `LiveMap.MVT`, and returned as shared SVG
-  definitions plus per-tile `<use>` entries.
+  fetched with Req, decoded through LiveMap's internal MVT decoder, and returned
+  as shared SVG definitions plus per-tile `<use>` entries.
 
   Examples:
 
@@ -346,11 +364,11 @@ defmodule LiveMap.Tile do
     source = normalize_source(source)
 
     case source.type do
-      :raster ->
+      type when type in [:raster, :svg] ->
         %{
           source: source,
           defs: [],
-          tiles: Enum.map(tiles, &prepare_raster_tile(&1, source))
+          tiles: Enum.map(tiles, &prepare_image_tile(&1, source))
         }
 
       :mvt ->
@@ -482,7 +500,8 @@ defmodule LiveMap.Tile do
     %{layer | tiles: tiles}
   end
 
-  defp prepare_raster_tile(tile, source) do
+  defp prepare_image_tile(tile, source) do
+    display_tile = format_display_tile(tile)
     source_zoom = min(tile.z, source.max_zoom || tile.z)
     overzoom_levels = tile.z - source_zoom
     overzoom_scale = 1 <<< overzoom_levels
@@ -494,13 +513,18 @@ defmodule LiveMap.Tile do
     source_y = div(display_y, overzoom_scale)
 
     tile = %{
-      type: :image,
+      type: if(source.type == :svg, do: :svg_image, else: :image),
       x: tile.x * 256,
       y: tile.y * 256,
       width: 256,
       height: 256,
       href: expand_url(source, %{x: source_x, y: source_y, z: source_zoom})
     }
+
+    tile =
+      if source.type == :svg,
+        do: Map.put(tile, :display_tile, display_tile),
+        else: tile
 
     case raster_child_view_box(display_x, display_y, overzoom_scale) do
       nil -> tile
@@ -754,9 +778,11 @@ defmodule LiveMap.Tile do
     }
   end
 
-  defp normalize_source(nil), do: @default_source
+  @doc false
+  @spec normalize_source(map() | nil) :: source()
+  def normalize_source(nil), do: @default_source
 
-  defp normalize_source(source) when is_map(source) do
+  def normalize_source(source) when is_map(source) do
     url = source[:url] || source["url"] || raise ArgumentError, "source.url is required"
     normalized_url = normalize_url(url)
     type = source[:type] || source["type"] || infer_source_type(normalized_url)
@@ -833,16 +859,17 @@ defmodule LiveMap.Tile do
     end
   end
 
-  defp normalize_type(type) when type in [:raster, :mvt], do: type
+  defp normalize_type(type) when type in [:raster, :svg, :mvt], do: type
   defp normalize_type("raster"), do: :raster
+  defp normalize_type("svg"), do: :svg
   defp normalize_type("mvt"), do: :mvt
   defp normalize_type(type), do: raise(ArgumentError, "unsupported source type: #{inspect(type)}")
 
   defp infer_source_type(url) do
-    if Regex.match?(~r/(?:\.mvt|\.pbf)(?:$|[?#])/i, url) do
-      :mvt
-    else
-      :raster
+    cond do
+      Regex.match?(~r/(?:\.mvt|\.pbf)(?:$|[?#])/i, url) -> :mvt
+      Regex.match?(~r/\.svg(?:$|[?#])/i, url) -> :svg
+      true -> :raster
     end
   end
 
@@ -884,8 +911,21 @@ defmodule LiveMap.Tile do
   defp validate_source!(%{url: url} = source) do
     uri = URI.parse(url)
 
-    unless uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != "" do
-      raise ArgumentError, "source.url must be an absolute http(s) URL, got: #{inspect(url)}"
+    absolute_http? =
+      uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != ""
+
+    root_relative? =
+      uri.scheme == nil and uri.host == nil and String.starts_with?(url, "/") and
+        not String.starts_with?(url, "//")
+
+    unless absolute_http? or root_relative? do
+      raise ArgumentError,
+            "source.url must be an absolute http(s) URL or root-relative URL, got: #{inspect(url)}"
+    end
+
+    if source.type == :mvt and not absolute_http? do
+      raise ArgumentError,
+            "MVT source.url must be an absolute http(s) URL, got: #{inspect(url)}"
     end
 
     unless Regex.match?(~r/\{zoom\}|\{z\}/, url) do
