@@ -659,8 +659,9 @@ defmodule LiveMap.MVT do
       path_data,
       "\"",
       if(shape == :polygon, do: " fill-rule=\"evenodd\"", else: []),
-      if(bridge?, do: " data-live-map-bridge", else: ""),
-      if(tunnel?, do: " data-live-map-tunnel", else: ""),
+      # A standalone SVG tile is XML: an attribute needs a value.
+      if(bridge?, do: " data-live-map-bridge=\"\"", else: ""),
+      if(tunnel?, do: " data-live-map-tunnel=\"\"", else: ""),
       " />"
     ]
   end
