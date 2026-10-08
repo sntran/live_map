@@ -448,7 +448,7 @@ To emit self-contained vector SVG, point the CLI at an MVT source:
 - Vector tile rendering moves tile fetching and decoding onto your server. Treat `tile_source` as trusted application configuration, not as untrusted request input.
 - Injected SVG becomes active page DOM. LiveMap intentionally does not sanitize it and preserves embedded elements, styles, scripts, and references while rewriting local IDs. Only inject SVG endpoints you trust as application code; an untrusted source can create an XSS vulnerability.
 - `LiveMap.VectorTile.Plug` never accepts an upstream source from request parameters. Keep its configured source URL and headers trusted, version styles in the endpoint URL, and place a CDN or reverse proxy in front when appropriate.
-- LiveMap fetches vector tiles through Req and enables Req's HTTP cache for repeated requests.
+- LiveMap fetches vector tiles through Req and does not write them to disk. The component keeps its recent tiles in memory. For `LiveMap.VectorTile.Plug`, the `Cache-Control` and `ETag` headers let the browser and a CDN keep the tiles: put a cache in front of it to follow the tile policy of the source.
 - Remote tile sources can increase server load and can expose SSRF risks if you allow untrusted users to control URLs or headers.
 - Continue to display proper OpenStreetMap attribution and follow the upstream tile usage policies for whatever raster or vector service you configure.
 - The OpenStreetMap vector service at `vector.openstreetmap.org` requires a valid identifying User-Agent, local caching, and no `no-cache` request headers. Review the current policy before shipping against it.

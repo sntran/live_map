@@ -658,7 +658,6 @@ defmodule LiveMap.Tile do
   defp fetch_vector_body(url, headers) do
     options = [
       headers: merge_default_headers(headers),
-      cache: true,
       compressed: true,
       raw: true,
       decode_body: false,
