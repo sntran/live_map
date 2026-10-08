@@ -42,7 +42,8 @@ defmodule LiveMap.MVTTest do
 
   test "decodes the checked-in fixture file" do
     tile =
-      "/home/esente/Projects/sntran/live_map/test/fixtures/shortbread_fixture.mvt.base64"
+      "../fixtures/shortbread_fixture.mvt.base64"
+      |> Path.expand(__DIR__)
       |> File.read!()
       |> String.trim()
       |> Base.decode64!()
