@@ -4,6 +4,9 @@ defmodule LiveMap.Marker do
   alias LiveMap.Coordinate
   alias LiveMap.Tile
 
+  # The shortest step between two points of a shape, in pixels.
+  @min_step 0.5
+
   def project(marker_slot, map_id, zoom, origin_x, origin_y, index, map_longitude) do
     {latitude, raw_longitude} = marker_position(marker_slot)
     k = round((map_longitude - raw_longitude) / 360.0)
@@ -138,12 +141,29 @@ defmodule LiveMap.Marker do
     k = round((map_longitude - center_lon) / 360.0)
     global_offset = k * 360.0
 
-    Enum.map(points, fn {latitude, lon} ->
+    points
+    |> Enum.map(fn {latitude, lon} ->
       final_lon = lon + global_offset
       x = Float.round(Tile.x(final_lon, zoom) * 256 - origin_x, 2)
       y = Float.round(Tile.y(latitude, zoom) * 256 - origin_y, 2)
       {x, y}
     end)
+    |> thin()
+  end
+
+  # The points of a shape with no point nearer than @min_step pixels to
+  # the point before it: such a point changes nothing on the screen. A
+  # long line at a low zoom has many of them. The last point stays, so
+  # the line ends at its end.
+  defp thin([first | rest]) do
+    {kept, skipped} =
+      Enum.reduce(rest, {[first], nil}, fn {x, y} = point, {[{last_x, last_y} | _] = kept, _} ->
+        if abs(x - last_x) < @min_step and abs(y - last_y) < @min_step,
+          do: {kept, point},
+          else: {[point | kept], nil}
+      end)
+
+    Enum.reverse(if skipped, do: [skipped | kept], else: kept)
   end
 
   defp points_attribute(points) do

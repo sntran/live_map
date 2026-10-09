@@ -145,7 +145,9 @@ Polygon and polyline overlays are projected in map coordinates and rendered as
 SVG shapes on their own layer. Each `:polygon` or `:polyline` slot accepts a
 `points` list of `%{latitude: ..., longitude: ...}` maps, with optional `id`
 and `label` attributes. LiveMap renders default SVG `<polygon>` and `<polyline>`
-elements for these overlays.
+elements for these overlays. It drops each point that is less than half a pixel
+from the point before it at the zoom of the map (the last point stays): a long
+line at a low zoom has many such points, and they change nothing on the screen.
 
 HTML marker example:
 
