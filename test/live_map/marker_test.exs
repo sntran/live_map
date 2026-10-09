@@ -44,6 +44,42 @@ defmodule LiveMap.MarkerTest do
     assert polyline.type === :polyline
   end
 
+  test "drops the points of a shape that are nearer than half a pixel to the point before" do
+    # At zoom 0, 0.001 degree is less than 0.001 pixel.
+    points =
+      for i <- 0..100, do: %{latitude: 0, longitude: i * 0.001}
+
+    polyline =
+      Marker.project_shape(
+        :polyline,
+        %{points: points ++ [%{latitude: 0, longitude: 10}, %{latitude: 0, longitude: 10.001}]},
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    # The first point, the point 7.11 pixels to the east, and the last
+    # point, so the line ends at its end.
+    assert polyline.points === [{128.0, 128.0}, {135.11, 128.0}, {135.11, 128.0}]
+
+    single =
+      Marker.project_shape(
+        :polygon,
+        %{points: [%{latitude: 0, longitude: 0}]},
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert single.points === [{128.0, 128.0}]
+  end
+
   test "uses fallback DOM ids and preserves float coordinates" do
     marker =
       Marker.project(

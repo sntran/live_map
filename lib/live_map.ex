@@ -11,6 +11,11 @@ defmodule LiveMap do
   alias LiveMap.Marker
   alias LiveMap.Tile
 
+  # The size of the cells of the origin of the layers, in pixels. Inside
+  # a cell, the numbers of the layers stay small enough for the floats of
+  # a browser (less than 0.1 px of error).
+  @origin_size 1_048_576
+
   @map_control_actions ~w(pan-up pan-left pan-right pan-down zoom-in zoom-out fullscreen)
   @pan_control_actions ~w(pan-up pan-left pan-right pan-down)
   @zoom_control_actions ~w(zoom-in zoom-out)
@@ -601,6 +606,14 @@ defmodule LiveMap do
     min_x = center_x - width / 2.0
     min_y = center_y - height / 2.0
 
+    # The layers draw the tiles, the shapes and the markers from a fixed
+    # origin, and a transform moves each layer to the view. A move of the
+    # map in the same cell of the origin changes only the transform: the
+    # tiles, the points and the markers stay the same, so LiveView sends
+    # only the new transform.
+    origin_x = origin(center_x)
+    origin_y = origin(center_y)
+
     base_assigns =
       assigns
       |> Map.put(:width, width)
@@ -612,6 +625,16 @@ defmodule LiveMap do
       |> Map.put(:zoom, zoom)
       |> Map.put(:min_x, min_x)
       |> Map.put(:min_y, min_y)
+      |> Map.put(:origin_x, origin_x)
+      |> Map.put(:origin_y, origin_y)
+      |> Map.put(
+        :layer_key,
+        "#{zoom}-#{div(origin_x, @origin_size)}-#{div(origin_y, @origin_size)}"
+      )
+      |> Map.put(
+        :layer_style,
+        "transform: translate(#{Float.round(origin_x - min_x, 2)}px, #{Float.round(origin_y - min_y, 2)}px);"
+      )
       |> Map.put(:tile_source, tile_source)
       |> Map.put(:svg_tile_source?, tile_source.type == :svg)
       |> Map.put(:"background-tile-source", background_tile_source)
@@ -631,16 +654,16 @@ defmodule LiveMap do
         :shape_overlays,
         shape_overlays(
           assigns |> Map.put(:zoom, zoom) |> Map.put(:longitude, longitude),
-          min_x,
-          min_y
+          origin_x,
+          origin_y
         )
       )
       |> Map.put(
         :marker_overlays,
         marker_overlays(
           assigns |> Map.put(:zoom, zoom) |> Map.put(:longitude, longitude),
-          min_x,
-          min_y
+          origin_x,
+          origin_y
         )
       )
       |> Map.put(:live_map_prepared, true)
@@ -681,10 +704,13 @@ defmodule LiveMap do
   defp background_opacity(_source, _base_style, 9), do: 0.42
   defp background_opacity(_source, _base_style, _zoom), do: 0
 
+  # The corner of the cell of the origin that holds a pixel.
+  defp origin(pixel), do: floor(pixel / @origin_size) * @origin_size
+
   defp shape_overlays(
          %{id: map_id, polyline: polylines, polygon: polygons, zoom: zoom} = assigns,
-         min_x,
-         min_y
+         origin_x,
+         origin_y
        ) do
     map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
 
@@ -692,7 +718,16 @@ defmodule LiveMap do
       polygons
       |> Enum.with_index()
       |> Enum.map(fn {polygon, index} ->
-        Marker.project_shape(:polygon, polygon, map_id, zoom, min_x, min_y, index, map_longitude)
+        Marker.project_shape(
+          :polygon,
+          polygon,
+          map_id,
+          zoom,
+          origin_x,
+          origin_y,
+          index,
+          map_longitude
+        )
       end)
 
     projected_polylines =
@@ -704,8 +739,8 @@ defmodule LiveMap do
           polyline,
           map_id,
           zoom,
-          min_x,
-          min_y,
+          origin_x,
+          origin_y,
           index,
           map_longitude
         )
@@ -714,13 +749,13 @@ defmodule LiveMap do
     projected_polygons ++ projected_polylines
   end
 
-  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom} = assigns, min_x, min_y) do
+  defp marker_overlays(%{id: map_id, marker: markers, zoom: zoom} = assigns, origin_x, origin_y) do
     map_longitude = parse(Map.get(assigns, :longitude, 0.0), :float)
 
     markers
     |> Enum.with_index()
     |> Enum.map(fn {marker, index} ->
-      Marker.project(marker, map_id, zoom, min_x, min_y, index, map_longitude)
+      Marker.project(marker, map_id, zoom, origin_x, origin_y, index, map_longitude)
     end)
   end
 
