@@ -289,6 +289,90 @@ Pass the same choices to LiveMap when the injected result should have matching
 page-level overrides. Use versioned endpoint URLs whenever a long-lived style
 or source profile changes.
 
+#### Tiles in the schema of OpenMapTiles
+
+The CSS and the styles of LiveMap know the layers of Shortbread. A
+source with `schema: "openmaptiles"` takes the tiles of OpenMapTiles, for
+example the tiles of OpenFreeMap: `LiveMap.MVT.OpenMapTiles` gives each
+feature the layer and the properties of Shortbread before the render.
+
+```elixir
+forward "/vector", LiveMap.VectorTile.Plug,
+  source: %{
+    type: :mvt,
+    url: "https://tiles.openfreemap.org/planet/20261004_113936_pt/{z}/{x}/{y}.pbf",
+    max_zoom: 14,
+    schema: "openmaptiles"
+  },
+  base_style: "detailed"
+```
+
+The conversion keeps the water, the land cover, the land use, the roads,
+the railways, the ferries, the buildings, the borders of the countries
+and of the provinces (admin levels 2 and 4), and the names of the places
+and of the water. The name of a place is its Latin name (`name:latin`)
+when the tile has one. OpenMapTiles has no population: the rank of a
+city gives it the priority of a large city. The conversion drops the
+points of interest, the house numbers and the names of the roads.
+
+The URL of the tiles of OpenFreeMap has the date of its data, and
+changes each week: get it from the TileJSON of OpenFreeMap
+(`https://tiles.openfreemap.org/planet`), and get it again each day.
+
+#### Large tiles at low zooms
+
+LiveMap reads all the data of a tile before the render, also the labels
+that its CSS hides at that zoom. Some sources have very large tiles at
+low zooms. The size of the data of the same tiles, with no compression,
+on 9 October 2026:
+
+| Source | 2/3/1 | 2/2/1 | 4/12/7 | 6/50/28 |
+|---|---|---|---|---|
+| OpenFreeMap (OpenMapTiles) | 1.3 MB | 1.6 MB | 474 KB | 229 KB |
+| `vector.openstreetmap.org` (Shortbread) | 138 KB | 431 KB | 267 KB | 302 KB |
+| VersaTiles (Shortbread) | 64 KB | 99 KB | 63 KB | 73 KB |
+
+A tile of OpenFreeMap at zoom 2 took LiveMap 1 to 4 seconds on a laptop,
+nearly all of it to read the data. In a VM in WebAssembly (a Durable
+Object of Cloudflare Workers), it took 12 to 55 seconds. A map of the
+world needs about 12 tiles at the same time: half of them failed. In
+the same tile, 1,226 of the 1,279 labels were the names of states and
+provinces, which the CSS shows only from zoom 7: 412 KB of an SVG of
+587 KB. A tile of VersaTiles at zoom 2 took about 30 ms.
+
+For a map of the world, get the tiles of the low zooms from a source
+with small tiles. A Plug in front of `LiveMap.VectorTile.Plug` can
+choose the source by the zoom of the path:
+
+```elixir
+defmodule MyAppWeb.VectorTiles do
+  @behaviour Plug
+
+  # Zoom 0 to 5: the small Shortbread tiles of VersaTiles.
+  @world %{type: :mvt, url: "https://tiles.versatiles.org/tiles/osm/{z}/{x}/{y}", max_zoom: 14}
+
+  @impl true
+  def init(opts) do
+    %{
+      world: LiveMap.VectorTile.Plug.init(Keyword.put(opts, :source, @world)),
+      roads: LiveMap.VectorTile.Plug.init(opts)
+    }
+  end
+
+  @impl true
+  def call(%Plug.Conn{path_info: [zoom | _]} = conn, plugs) do
+    case Integer.parse(zoom) do
+      {zoom, ""} when zoom <= 5 -> LiveMap.VectorTile.Plug.call(conn, plugs.world)
+      _other -> LiveMap.VectorTile.Plug.call(conn, plugs.roads)
+    end
+  end
+
+  def call(conn, plugs), do: LiveMap.VectorTile.Plug.call(conn, plugs.roads)
+end
+```
+
+Give the attribution of each source on the map.
+
 ### Built-in vector style
 
 Vector maps use an SVG adaptation of the open source
@@ -450,6 +534,7 @@ To emit self-contained vector SVG, point the CLI at an MVT source:
 - `LiveMap.VectorTile.Plug` never accepts an upstream source from request parameters. Keep its configured source URL and headers trusted, version styles in the endpoint URL, and place a CDN or reverse proxy in front when appropriate.
 - LiveMap fetches vector tiles through Req and does not write them to disk. The component keeps its recent tiles in memory. For `LiveMap.VectorTile.Plug`, the `Cache-Control` and `ETag` headers let the browser and a CDN keep the tiles: put a cache in front of it to follow the tile policy of the source.
 - Remote tile sources can increase server load and can expose SSRF risks if you allow untrusted users to control URLs or headers.
+- LiveMap reads and renders a tile in the process of the request. A large tile at a low zoom can take seconds, and much longer in a VM in WebAssembly: see "Large tiles at low zooms".
 - Continue to display proper OpenStreetMap attribution and follow the upstream tile usage policies for whatever raster or vector service you configure.
 - The OpenStreetMap vector service at `vector.openstreetmap.org` requires a valid identifying User-Agent, local caching, and no `no-cache` request headers. Review the current policy before shipping against it.
 
