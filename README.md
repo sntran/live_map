@@ -155,6 +155,39 @@ HTML marker example:
       </button>
     </:marker>
 
+## Moving the map
+
+Each layer of the map (the background tiles, the tiles, the shapes and the
+markers) is in a group with the class `live-map-layer`. The tiles, the
+points of the shapes and the markers have their place from a fixed origin,
+and a CSS transform on the group moves the layer to the view. The origin
+is the corner of a cell of 2<sup>20</sup> pixels: up to zoom 12 it is the
+corner of the world, and at higher zooms the numbers stay small enough for
+the floats of a browser.
+
+So a new `center` at the same zoom changes only the transform of the
+groups, while the center stays in the same cell. The markers and the points
+of the shapes do not change, and LiveView sends only the new transform. A
+map that follows a moving point, or a map that a hook pans, sends a small
+update for each move, not all of the points of its lines again. When new
+tiles come into the view, LiveView sends the list of the tiles again. Each
+tile has an id from its zoom and its place, so the browser keeps the
+tiles that stay in the view, with their images.
+
+The id of each group has the zoom and the cell of the origin
+(`MAP_ID-tile-layer-ZOOM-X-Y`). A new zoom or a new cell gives new groups.
+This lets an app animate a move of the map with CSS only, with no
+animation of a zoom:
+
+```css
+#trip-map .live-map-layer {
+  transition: transform 250ms linear;
+}
+```
+
+Animate the markers that move too (`.live-map-marker` has a CSS transform
+for its place), with the same time, so that they move with the map.
+
 ## Rendering Type and Tile Sources
 
 Set `rendering-type` to the `raster|vector` enum to select LiveMap's built-in

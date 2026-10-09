@@ -32,30 +32,33 @@
   >
     <title>Background Tile Layer</title>
 
-    <image
-      :for={tile <- @background_tiles}
-      :if={is_nil(tile[:view_box])}
-      href={tile.href}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-    />
+    <g id={"#{@id}-background-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
+      <image
+        :for={tile <- @background_tiles}
+        :if={is_nil(tile[:view_box])}
+        id={"#{@id}-background-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
+        href={tile.href}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+      />
 
-    <svg
-      :for={tile <- @background_tiles}
-      :if={not is_nil(tile[:view_box])}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-      viewBox={tile.view_box}
-      preserveAspectRatio="none"
-      overflow="hidden"
-    >
-      <image href={tile.href} x="0" y="0" width="256" height="256" />
-    </svg>
-
+      <svg
+        :for={tile <- @background_tiles}
+        :if={not is_nil(tile[:view_box])}
+        id={"#{@id}-background-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+        viewBox={tile.view_box}
+        preserveAspectRatio="none"
+        overflow="hidden"
+      >
+        <image href={tile.href} x="0" y="0" width="256" height="256" />
+      </svg>
+    </g>
   </svg>
 
   <svg
@@ -75,89 +78,93 @@
       <% end %>
     </defs>
 
-    <image
-      :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :image and is_nil(tile[:view_box])}
-      href={tile.href}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-    />
+    <g id={"#{@id}-tile-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
+      <image
+        :for={tile <- @tile_layer.tiles}
+        :if={tile.type == :image and is_nil(tile[:view_box])}
+        id={"#{@id}-image-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
+        href={tile.href}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+      />
 
-    <svg
-      :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :image and not is_nil(tile[:view_box])}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-      viewBox={tile.view_box}
-      preserveAspectRatio="none"
-      overflow="hidden"
-    >
-      <image href={tile.href} x="0" y="0" width="256" height="256" />
-    </svg>
+      <svg
+        :for={tile <- @tile_layer.tiles}
+        :if={tile.type == :image and not is_nil(tile[:view_box])}
+        id={"#{@id}-image-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+        viewBox={tile.view_box}
+        preserveAspectRatio="none"
+        overflow="hidden"
+      >
+        <image href={tile.href} x="0" y="0" width="256" height="256" />
+      </svg>
 
-    <svg
-      :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :svg_image}
-      id={"#{@id}-svg-tile-#{String.replace(tile.display_tile, "/", "-")}"}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-      viewBox={tile[:view_box] || "0 0 256 256"}
-      preserveAspectRatio="none"
-      overflow="hidden"
-      data-live-map-display-tile={tile.display_tile}
-    >
-      <.svg_tile_content map_id={@id} tile={tile} />
-    </svg>
+      <svg
+        :for={tile <- @tile_layer.tiles}
+        :if={tile.type == :svg_image}
+        id={"#{@id}-svg-tile-#{String.replace(tile.display_tile, "/", "-")}"}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+        viewBox={tile[:view_box] || "0 0 256 256"}
+        preserveAspectRatio="none"
+        overflow="hidden"
+        data-live-map-display-tile={tile.display_tile}
+      >
+        <.svg_tile_content map_id={@id} tile={tile} />
+      </svg>
 
-    <svg
-      :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :svg_use}
-      id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-      viewBox={tile.view_box}
-      preserveAspectRatio="none"
-      overflow="hidden"
-      data-live-map-tile-state={tile.state}
-      data-live-map-display-tile={tile.display_tile}
-      data-live-map-source-tile={tile.source_tile}
-      data-live-map-tile-placeholder={tile[:placeholder] && "parent"}
-      data-live-map-fallback-tile={tile[:fallback_tile]}
-    >
-      <%= if tile.state == "loading" and tile[:placeholder] != true do %>
-        <circle cx="128" cy="128" r="16" stroke="#9ca3af" stroke-width="4" fill="none" stroke-dasharray="25 75" stroke-linecap="round">
-          <animateTransform attributeName="transform" type="rotate" from="0 128 128" to="360 128 128" dur="1s" repeatCount="indefinite" />
-        </circle>
-      <% else %>
-        <use href={"##{tile.def_id}"} x="0" y="0" width="1" height="1" />
-      <% end %>
-    </svg>
+      <svg
+        :for={tile <- @tile_layer.tiles}
+        :if={tile.type == :svg_use}
+        id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+        viewBox={tile.view_box}
+        preserveAspectRatio="none"
+        overflow="hidden"
+        data-live-map-tile-state={tile.state}
+        data-live-map-display-tile={tile.display_tile}
+        data-live-map-source-tile={tile.source_tile}
+        data-live-map-tile-placeholder={tile[:placeholder] && "parent"}
+        data-live-map-fallback-tile={tile[:fallback_tile]}
+      >
+        <%= if tile.state == "loading" and tile[:placeholder] != true do %>
+          <circle cx="128" cy="128" r="16" stroke="#9ca3af" stroke-width="4" fill="none" stroke-dasharray="25 75" stroke-linecap="round">
+            <animateTransform attributeName="transform" type="rotate" from="0 128 128" to="360 128 128" dur="1s" repeatCount="indefinite" />
+          </circle>
+        <% else %>
+          <use href={"##{tile.def_id}"} x="0" y="0" width="1" height="1" />
+        <% end %>
+      </svg>
 
-    <svg
-      :for={tile <- @tile_layer.tiles}
-      :if={tile.type == :error}
-      id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
-      x={tile.x - @min_x}
-      y={tile.y - @min_y}
-      width={tile.width}
-      height={tile.height}
-      viewBox="0 0 1 1"
-      preserveAspectRatio="none"
-      overflow="hidden"
-      data-live-map-tile-state={tile.state}
-      data-live-map-display-tile={tile.display_tile}
-      data-live-map-source-tile={tile.source_tile}
-      data-live-map-tile-error-kind={tile.error_kind}
-      data-live-map-tile-error-reason={tile.error_reason}
-    />
+      <svg
+        :for={tile <- @tile_layer.tiles}
+        :if={tile.type == :error}
+        id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
+        x={tile.x - @origin_x}
+        y={tile.y - @origin_y}
+        width={tile.width}
+        height={tile.height}
+        viewBox="0 0 1 1"
+        preserveAspectRatio="none"
+        overflow="hidden"
+        data-live-map-tile-state={tile.state}
+        data-live-map-display-tile={tile.display_tile}
+        data-live-map-source-tile={tile.source_tile}
+        data-live-map-tile-error-kind={tile.error_kind}
+        data-live-map-tile-error-reason={tile.error_reason}
+      />
+    </g>
   </svg>
 
   <svg
@@ -175,41 +182,43 @@
   >
     <title>Shape Layer</title>
 
-    <%= for shape <- @shape_overlays do %>
-      <%= if shape.type == :polygon do %>
-        <polygon
-          id={shape.dom_id}
-          class={["live-map-polygon", shape.class]}
-          style={shape.style}
-          data-live-map-shape="true"
-          data-live-map-shape-type="polygon"
-          data-live-map-shape-id={shape.id}
-          points={shape.points_attribute}
-          fill={shape.fill || "rgba(2,132,199,0.18)"}
-          stroke={shape.stroke || "#0284c7"}
-          stroke-width={shape.stroke_width || "2"}
-        >
-          <title :if={shape.label}>{shape.label}</title>
-        </polygon>
-      <% else %>
-        <polyline
-          id={shape.dom_id}
-          class={["live-map-polyline", shape.class]}
-          style={shape.style}
-          data-live-map-shape="true"
-          data-live-map-shape-type="polyline"
-          data-live-map-shape-id={shape.id}
-          points={shape.points_attribute}
-          fill={shape.fill || "none"}
-          stroke={shape.stroke || "#0284c7"}
-          stroke-width={shape.stroke_width || "2"}
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <title :if={shape.label}>{shape.label}</title>
-        </polyline>
+    <g id={"#{@id}-shape-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
+      <%= for shape <- @shape_overlays do %>
+        <%= if shape.type == :polygon do %>
+          <polygon
+            id={shape.dom_id}
+            class={["live-map-polygon", shape.class]}
+            style={shape.style}
+            data-live-map-shape="true"
+            data-live-map-shape-type="polygon"
+            data-live-map-shape-id={shape.id}
+            points={shape.points_attribute}
+            fill={shape.fill || "rgba(2,132,199,0.18)"}
+            stroke={shape.stroke || "#0284c7"}
+            stroke-width={shape.stroke_width || "2"}
+          >
+            <title :if={shape.label}>{shape.label}</title>
+          </polygon>
+        <% else %>
+          <polyline
+            id={shape.dom_id}
+            class={["live-map-polyline", shape.class]}
+            style={shape.style}
+            data-live-map-shape="true"
+            data-live-map-shape-type="polyline"
+            data-live-map-shape-id={shape.id}
+            points={shape.points_attribute}
+            fill={shape.fill || "none"}
+            stroke={shape.stroke || "#0284c7"}
+            stroke-width={shape.stroke_width || "2"}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <title :if={shape.label}>{shape.label}</title>
+          </polyline>
+        <% end %>
       <% end %>
-    <% end %>
+    </g>
   </svg>
 
   <svg
@@ -226,49 +235,51 @@
   >
     <title>Marker Layer</title>
 
-    <g :for={marker <- @marker_overlays}
-      id={marker.dom_id}
-      class="live-map-marker"
-      data-live-map-marker="true"
-      data-live-map-marker-id={marker.id}
-      data-live-map-marker-title={marker.title}
-      data-live-map-marker-label={marker.title}
-      style={"transform: translate(#{marker.x}px, #{marker.y}px) scale(#{marker.scale});"}
-    >
-      <title>{marker.title}</title>
+    <g id={"#{@id}-marker-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
+      <g :for={marker <- @marker_overlays}
+        id={marker.dom_id}
+        class="live-map-marker"
+        data-live-map-marker="true"
+        data-live-map-marker-id={marker.id}
+        data-live-map-marker-title={marker.title}
+        data-live-map-marker-label={marker.title}
+        style={"transform: translate(#{marker.x}px, #{marker.y}px) scale(#{marker.scale});"}
+      >
+        <title>{marker.title}</title>
 
-      <% marker_body = if marker.slot.inner_block, do: render_slot(marker.slot), else: nil %>
+        <% marker_body = if marker.slot.inner_block, do: render_slot(marker.slot), else: nil %>
 
-      <%= if slot_content_present?(marker_body) do %>
-        <foreignObject
-          x="-160"
-          y="-160"
-          width="320"
-          height="320"
-          overflow="visible"
-          style="pointer-events: none;"
-        >
-          <div
-            xmlns="http://www.w3.org/1999/xhtml"
-            class="live-map-marker-html"
-            style="pointer-events: none; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"
+        <%= if slot_content_present?(marker_body) do %>
+          <foreignObject
+            x="-160"
+            y="-160"
+            width="320"
+            height="320"
+            overflow="visible"
+            style="pointer-events: none;"
           >
-            <div class="live-map-marker-html-content" style="pointer-events: auto;">
-              {marker_body}
+            <div
+              xmlns="http://www.w3.org/1999/xhtml"
+              class="live-map-marker-html"
+              style="pointer-events: none; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"
+            >
+              <div class="live-map-marker-html-content" style="pointer-events: auto;">
+                {marker_body}
+              </div>
             </div>
-          </div>
-        </foreignObject>
-      <% else %>
-        <path
-          class="live-map-marker-pin"
-          d="M0 -28C-5.523 -28 -10 -23.523 -10 -18c0 7.5 10 18 10 18s10 -10.5 10 -18c0 -5.523 -4.477 -10 -10 -10Z"
-          fill="#DB4437"
-          stroke="white"
-          stroke-width="1.75"
-          stroke-linejoin="round"
-        />
-        <circle class="live-map-marker-pin-center" cx="0" cy="-18" r="4.5" fill="#A52714" />
-      <% end %>
+          </foreignObject>
+        <% else %>
+          <path
+            class="live-map-marker-pin"
+            d="M0 -28C-5.523 -28 -10 -23.523 -10 -18c0 7.5 10 18 10 18s10 -10.5 10 -18c0 -5.523 -4.477 -10 -10 -10Z"
+            fill="#DB4437"
+            stroke="white"
+            stroke-width="1.75"
+            stroke-linejoin="round"
+          />
+          <circle class="live-map-marker-pin-center" cx="0" cy="-18" r="4.5" fill="#A52714" />
+        <% end %>
+      </g>
     </g>
   </svg>
 

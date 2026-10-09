@@ -185,9 +185,13 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       [marker] = Floki.find(document, "#live-map-marker-center")
 
+      # From the origin of the layer, and the layer moves to the view: the
+      # marker is at 150, 75 on the screen.
       assert Floki.attribute(marker, "style") === [
-               "transform: translate(150.0px, 75.0px) scale(1.0);"
+               "transform: translate(128.0px, 128.0px) scale(1.0);"
              ]
+
+      assert layer_style(document, "marker") === "transform: translate(22.0px, -53.0px);"
     end
 
     test "uses marker labels for accessibility and custom HTML slot bodies without :let" do
@@ -286,7 +290,9 @@ defmodule LiveMapTest do
 
       assert [_shape_layer] = Floki.find(document, "svg.live-map-shapes")
       [polyline] = Floki.find(document, "polyline#live-map-polyline-route")
-      assert Floki.attribute(polyline, "points") === ["150.0,75.0 157.11,75.0"]
+      assert Floki.attribute(polyline, "points") === ["128.0,128.0 135.11,128.0"]
+      # On the screen: 150,75 157.11,75.
+      assert layer_style(document, "shape") === "transform: translate(22.0px, -53.0px);"
     end
 
     test "renders projected polygons inside a dedicated shape layer" do
@@ -309,8 +315,10 @@ defmodule LiveMapTest do
       [polygon] = Floki.find(document, "polygon#live-map-polygon-district")
 
       assert Floki.attribute(polygon, "points") === [
-               "150.0,75.0 157.11,75.0 157.11,67.85"
+               "128.0,128.0 135.11,128.0 135.11,120.85"
              ]
+
+      assert layer_style(document, "shape") === "transform: translate(22.0px, -53.0px);"
     end
   end
 
@@ -549,8 +557,10 @@ defmodule LiveMapTest do
       {:ok, document} = Floki.parse_document(rendered)
       assert [_, tile | _] = Floki.find(document, "image")
       assert Floki.attribute(tile, "href") === ["https://tile.openstreetmap.org/0/0/0.png"]
-      assert Floki.attribute(tile, "x") === ["22.0"]
-      assert Floki.attribute(tile, "y") === ["-53.0"]
+      assert Floki.attribute(tile, "x") === ["0"]
+      assert Floki.attribute(tile, "y") === ["0"]
+      # On the screen: 22, -53.
+      assert layer_style(document, "tile") === "transform: translate(22.0px, -53.0px);"
       assert Floki.attribute(tile, "width") === ["256"]
       assert Floki.attribute(tile, "height") === ["256"]
     end
@@ -576,19 +586,44 @@ defmodule LiveMapTest do
              ]
     end
 
+    test "each image tile has an id from its zoom and its place, so a pan keeps it" do
+      ids = fn center ->
+        component(zoom: 3, width: 300, height: 150, center: center)
+        |> Floki.parse_document!()
+        |> Floki.find("image")
+        |> Enum.flat_map(&Floki.attribute(&1, "id"))
+      end
+
+      before = ids.({0, 0})
+      later = ids.({0, 30})
+
+      assert "live-map-image-tile-3-3-3" in before
+      assert length(Enum.uniq(before)) == length(before)
+      # The tiles in both views keep their ids.
+      assert [_ | _] = shared = before -- (before -- later)
+      assert Enum.all?(shared, &String.starts_with?(&1, "live-map-image-tile-3-"))
+      refute before == later
+    end
+
     test "should have 4 tiles at zoom 1" do
       rendered = component(zoom: 1)
       {:ok, document} = Floki.parse_document(rendered)
       tiles = Floki.find(document, "image")
       assert length(tiles) === 4
+      {offset_x, offset_y} = layer_offset(document, "tile")
 
       tiles
       |> Enum.with_index()
       |> Enum.each(fn {tile, index} ->
-        [x] = Floki.attribute(tile, "x") |> Enum.map(&String.to_float/1)
-        [y] = Floki.attribute(tile, "y") |> Enum.map(&String.to_float/1)
-        assert x === div(index, 2) * 256 - 106.0, "tile's x should be relative to min_x"
-        assert y === rem(index, 2) * 256 - 181.0, "tile's y should be relative to min_y"
+        [x] = Floki.attribute(tile, "x") |> Enum.map(&String.to_integer/1)
+        [y] = Floki.attribute(tile, "y") |> Enum.map(&String.to_integer/1)
+
+        assert x + offset_x === div(index, 2) * 256 - 106.0,
+               "tile's x should be relative to min_x"
+
+        assert y + offset_y === rem(index, 2) * 256 - 181.0,
+               "tile's y should be relative to min_y"
+
         assert Floki.attribute(tile, "width") === ["256"], "tile width should always be 256"
         assert Floki.attribute(tile, "height") === ["256"], "tile height should always be 256"
       end)
@@ -623,21 +658,24 @@ defmodule LiveMapTest do
 
         images = Floki.find(document, "image")
         assert length(images) === length(tiles)
+        {offset_x, offset_y} = layer_offset(document, "tile")
 
         images
         |> Enum.with_index()
         |> Enum.each(fn {image, index} ->
           tile = Enum.at(tiles, index)
-          [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_float/1)
-          [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_float/1)
+          [x] = Floki.attribute(image, "x") |> Enum.map(&String.to_integer/1)
+          [y] = Floki.attribute(image, "y") |> Enum.map(&String.to_integer/1)
 
           center_x = LiveMap.Tile.x(longitude, zoom) * 256.0
           center_y = LiveMap.Tile.y(latitude, zoom) * 256.0
           min_x = center_x - width / 2.0
           min_y = center_y - height / 2.0
 
-          assert_in_delta x, tile.x * 256 - min_x, 1.0e-5
-          assert_in_delta y, tile.y * 256 - min_y, 1.0e-5
+          # The place on the screen: the place in the layer, and the move
+          # of the layer (rounded to 0.01 px).
+          assert_in_delta x + offset_x, tile.x * 256 - min_x, 0.006
+          assert_in_delta y + offset_y, tile.y * 256 - min_y, 0.006
           assert Floki.attribute(image, "width") === ["256"], "image width should always be 256"
           assert Floki.attribute(image, "height") === ["256"], "image height should always be 256"
         end)
@@ -1064,7 +1102,7 @@ defmodule LiveMapTest do
       end
     end
 
-    test "reprojects markers and shapes after panning" do
+    test "a pan moves the layers, and keeps the markers, the shapes and the tiles" do
       socket =
         prepared_map_socket(
           width: 512,
@@ -1076,23 +1114,83 @@ defmodule LiveMapTest do
           polygon: [%{id: "area", points: [%{latitude: 0, longitude: 0}]}]
         )
 
-      assert [%{x: 256.0}] = socket.assigns.marker_overlays
+      # The point 0,0 is at 512, 512 of the world at zoom 2, and the layers
+      # move by -256, -384: on the screen, at 256, 128.
+      assert [%{x: 512.0, y: 512.0}] = socket.assigns.marker_overlays
 
       assert Enum.all?(socket.assigns.shape_overlays, fn shape ->
-               shape.points == [{256.0, 128.0}]
+               shape.points == [{512.0, 512.0}]
              end)
+
+      assert socket.assigns.layer_style === "transform: translate(-256.0px, -384.0px);"
+
+      # The socket after its render: nothing changed yet.
+      socket = %{socket | assigns: %{socket.assigns | __changed__: %{}}}
 
       assert {:noreply, updated} =
                LiveMap.handle_event("map_control", %{"action" => "pan-right"}, socket)
 
-      assert [%{x: marker_x}] = updated.assigns.marker_overlays
-      assert_in_delta marker_x, 0.0, 1.0e-10
+      # So LiveView sends no new marker and no new point.
+      changed = updated.assigns.__changed__
+      assert Map.has_key?(changed, :layer_style)
+      refute Map.has_key?(changed, :marker_overlays)
+      refute Map.has_key?(changed, :shape_overlays)
+      refute Map.has_key?(changed, :layer_key)
 
-      assert Enum.all?(updated.assigns.shape_overlays, fn shape ->
-               shape.points == [{0.0, 128.0}]
-             end)
-
+      # Only the move of the layers changes: on the screen, the point is
+      # at 0, 128.
+      assert updated.assigns.marker_overlays === socket.assigns.marker_overlays
+      assert updated.assigns.shape_overlays === socket.assigns.shape_overlays
+      assert updated.assigns.layer_key === socket.assigns.layer_key
+      assert updated.assigns.layer_style === "transform: translate(-512.0px, -384.0px);"
       refute updated.assigns.tiles === socket.assigns.tiles
+    end
+
+    test "a new zoom gives the layers new ids" do
+      socket = prepared_map_socket(zoom: 2, map_control: [%{action: "zoom-in"}])
+      assert socket.assigns.layer_key === "2-0-0"
+
+      assert {:noreply, updated} =
+               LiveMap.handle_event("map_control", %{"action" => "zoom-in"}, socket)
+
+      assert updated.assigns.layer_key === "3-0-0"
+
+      html =
+        render_component(
+          LiveMap,
+          Map.take(updated.assigns, [:id, :width, :height, :center, :zoom])
+        )
+
+      assert html =~ ~s(id="live-map-tile-layer-3-0-0")
+      assert html =~ ~s(id="live-map-marker-layer-3-0-0")
+    end
+
+    test "far from the corner of the world, the layers draw from the corner of a cell" do
+      # At zoom 18, the world has 2^26 pixels: the layers draw from the
+      # corner of the cell of 2^20 pixels that holds the center.
+      socket =
+        prepared_map_socket(
+          width: 200,
+          height: 100,
+          zoom: 18,
+          center: {21.0285, 105.8542},
+          marker: [%{id: "hanoi", position: {21.0285, 105.8542}, title: "Hà Nội"}]
+        )
+
+      center_x = LiveMap.Tile.x(105.8542, 18) * 256
+      center_y = LiveMap.Tile.y(21.0285, 18) * 256
+      origin_x = floor(center_x / 1_048_576) * 1_048_576
+      origin_y = floor(center_y / 1_048_576) * 1_048_576
+
+      assert socket.assigns.layer_key ===
+               "18-#{div(origin_x, 1_048_576)}-#{div(origin_y, 1_048_576)}"
+
+      assert [%{x: x, y: y}] = socket.assigns.marker_overlays
+      assert x >= 0 and x < 1_048_576 and y >= 0 and y < 1_048_576
+
+      {offset_x, offset_y} = parse_offset(socket.assigns.layer_style)
+      assert_in_delta x + offset_x, 100.0, 0.02
+      assert_in_delta y + offset_y, 50.0, 0.02
     end
   end
 
@@ -1250,6 +1348,22 @@ defmodule LiveMapTest do
       assert Map.has_key?(changed, :longitude),
              "longitude should be marked as changed, __changed__ = #{inspect(changed)}"
     end
+  end
+
+  # The style of a layer of a map (its move to the view).
+  defp layer_style(document, layer) do
+    [group] = Floki.find(document, "g.live-map-layer[id^='live-map-#{layer}-layer-']")
+    [style] = Floki.attribute(group, "style")
+    style
+  end
+
+  defp layer_offset(document, layer), do: parse_offset(layer_style(document, layer))
+
+  defp parse_offset(style) do
+    [x, y] =
+      Regex.run(~r/translate\((-?[\d.]+)px, (-?[\d.]+)px\)/, style, capture: :all_but_first)
+
+    {String.to_float(x), String.to_float(y)}
   end
 
   defp component(assigns \\ []) do
@@ -1650,8 +1764,10 @@ defmodule LiveMapTest do
         width: 256,
         height: 256,
         zoom: 2,
-        min_x: 256,
-        min_y: 256,
+        origin_x: 256,
+        origin_y: 256,
+        layer_key: "2-0-0",
+        layer_style: "transform: translate(0.0px, 0.0px);",
         style: [],
         fullscreen?: false,
         fullscreen_control: nil,

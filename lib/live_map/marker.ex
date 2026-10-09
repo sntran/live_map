@@ -4,15 +4,15 @@ defmodule LiveMap.Marker do
   alias LiveMap.Coordinate
   alias LiveMap.Tile
 
-  def project(marker_slot, map_id, zoom, min_x, min_y, index, map_longitude) do
+  def project(marker_slot, map_id, zoom, origin_x, origin_y, index, map_longitude) do
     {latitude, raw_longitude} = marker_position(marker_slot)
     k = round((map_longitude - raw_longitude) / 360.0)
     longitude = raw_longitude + k * 360.0
 
     id = normalize_id(Map.get(marker_slot, :id))
     title = marker_title(marker_slot)
-    x = Float.round(Tile.x(longitude, zoom) * 256 - min_x, 2)
-    y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
+    x = Float.round(Tile.x(longitude, zoom) * 256 - origin_x, 2)
+    y = Float.round(Tile.y(latitude, zoom) * 256 - origin_y, 2)
 
     %{
       id: id,
@@ -29,11 +29,13 @@ defmodule LiveMap.Marker do
     }
   end
 
-  def project_shape(type, shape_slot, map_id, zoom, min_x, min_y, index, map_longitude)
+  def project_shape(type, shape_slot, map_id, zoom, origin_x, origin_y, index, map_longitude)
       when type in [:polygon, :polyline] do
     id = normalize_id(Map.get(shape_slot, :id))
     label = Map.get(shape_slot, :label)
-    points = project_points(Map.fetch!(shape_slot, :points), zoom, min_x, min_y, map_longitude)
+
+    points =
+      project_points(Map.fetch!(shape_slot, :points), zoom, origin_x, origin_y, map_longitude)
 
     %{
       type: type,
@@ -88,7 +90,7 @@ defmodule LiveMap.Marker do
     raise ArgumentError, "marker requires title; label is a deprecated fallback"
   end
 
-  defp project_points(points, zoom, min_x, min_y, map_longitude) do
+  defp project_points(points, zoom, origin_x, origin_y, map_longitude) do
     points
     |> Enum.reduce({[], 0, nil}, fn point, {acc, longitude_offset, prev_lon} ->
       latitude = Coordinate.parse_number(Map.fetch!(point, :latitude), :shape)
@@ -118,12 +120,12 @@ defmodule LiveMap.Marker do
     end)
     |> elem(0)
     |> Enum.reverse()
-    |> shift_points_to_map_center(zoom, min_x, min_y, map_longitude)
+    |> shift_points_to_map_center(zoom, origin_x, origin_y, map_longitude)
   end
 
-  defp shift_points_to_map_center([], _zoom, _min_x, _min_y, _map_longitude), do: []
+  defp shift_points_to_map_center([], _zoom, _origin_x, _origin_y, _map_longitude), do: []
 
-  defp shift_points_to_map_center(points, zoom, min_x, min_y, map_longitude) do
+  defp shift_points_to_map_center(points, zoom, origin_x, origin_y, map_longitude) do
     {min_lon, max_lon} =
       Enum.reduce(points, {nil, nil}, fn {_, lon}, {min, max} ->
         {
@@ -138,8 +140,8 @@ defmodule LiveMap.Marker do
 
     Enum.map(points, fn {latitude, lon} ->
       final_lon = lon + global_offset
-      x = Float.round(Tile.x(final_lon, zoom) * 256 - min_x, 2)
-      y = Float.round(Tile.y(latitude, zoom) * 256 - min_y, 2)
+      x = Float.round(Tile.x(final_lon, zoom) * 256 - origin_x, 2)
+      y = Float.round(Tile.y(latitude, zoom) * 256 - origin_y, 2)
       {x, y}
     end)
   end
