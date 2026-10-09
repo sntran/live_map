@@ -22,6 +22,15 @@ defmodule LiveMap.MVTTest do
     refute rendered =~ "<script>"
   end
 
+  test "renders well-formed XML, also for a bridge, so a standalone tile is an image" do
+    assert {:ok, svg} = MVT.decode(shortbread_fixture_tile())
+
+    rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+
+    assert rendered =~ ~s(data-live-map-bridge="")
+    refute rendered =~ ~r{\sdata-live-map-(bridge|tunnel)[\s/>]}
+  end
+
   test "decodes gzip-compressed MVT input" do
     tile = shortbread_fixture_tile()
 
@@ -33,7 +42,8 @@ defmodule LiveMap.MVTTest do
 
   test "decodes the checked-in fixture file" do
     tile =
-      "/home/esente/Projects/sntran/live_map/test/fixtures/shortbread_fixture.mvt.base64"
+      "../fixtures/shortbread_fixture.mvt.base64"
+      |> Path.expand(__DIR__)
       |> File.read!()
       |> String.trim()
       |> Base.decode64!()

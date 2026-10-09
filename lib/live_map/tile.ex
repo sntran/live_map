@@ -658,7 +658,6 @@ defmodule LiveMap.Tile do
   defp fetch_vector_body(url, headers) do
     options = [
       headers: merge_default_headers(headers),
-      cache: true,
       compressed: true,
       raw: true,
       decode_body: false,
@@ -791,6 +790,7 @@ defmodule LiveMap.Tile do
     headers = normalize_headers(source[:headers] || source["headers"] || [])
     attribution = source[:attribution] || source["attribution"]
     attribution_url = source[:attribution_url] || source["attribution_url"]
+    schema = source[:schema] || source["schema"]
     normalized_type = normalize_type(type)
 
     normalized_source =
@@ -803,6 +803,7 @@ defmodule LiveMap.Tile do
       }
       |> maybe_put_source_text(:attribution, attribution)
       |> maybe_put_source_url(:attribution_url, attribution_url)
+      |> maybe_put_source_text(:schema, schema)
 
     validate_source!(normalized_source)
   end

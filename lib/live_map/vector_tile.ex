@@ -53,7 +53,13 @@ defmodule LiveMap.VectorTile do
       end)
 
     with {:ok, body} <- Tile.fetch_vector_tile(source, source_tile),
-         {:ok, svg} <- MVT.decode(body, id_prefix: id_prefix, custom_css: custom_css, zoom: zoom) do
+         {:ok, svg} <-
+           MVT.decode(body,
+             id_prefix: id_prefix,
+             custom_css: custom_css,
+             zoom: zoom,
+             schema: source[:schema]
+           ) do
       svg = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
       {:ok, put_overzoom_view_box(svg, x, y, overzoom_scale)}
     end
