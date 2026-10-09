@@ -141,6 +141,21 @@ defmodule LiveMap.TileTest do
     assert layer.source.attribution_url == "https://tiles.example.com/terms"
   end
 
+  test "prepare_layer keeps the schema of a vector source" do
+    layer =
+      Tile.prepare_layer([], %{
+        "url" => "https://tiles.example.com/{z}/{x}/{y}.pbf",
+        "schema" => "openmaptiles"
+      })
+
+    assert layer.source.schema == "openmaptiles"
+
+    refute Map.has_key?(
+             Tile.prepare_layer([], %{url: "https://t.example/{z}/{x}/{y}.pbf"}).source,
+             :schema
+           )
+  end
+
   test "prepare_layer only requires versions for versioned templates" do
     layer =
       Tile.prepare_layer([%{x: 0, y: 0, z: 0}], %{

@@ -518,9 +518,15 @@ defmodule LiveMap.MVT do
     clip_id = "live-map-mvt-clip-#{id_prefix}"
     css = Enum.join([tile_css(), default_label_css(zoom), custom_css], "\n")
 
+    features = Enum.flat_map(layers, & &1.features)
+
+    features =
+      if Keyword.get(opts, :schema) == "openmaptiles",
+        do: Enum.flat_map(features, &LiveMap.MVT.OpenMapTiles.normalize/1),
+        else: features
+
     groups =
-      layers
-      |> Enum.flat_map(& &1.features)
+      features
       |> Enum.reduce(%{}, &group_feature/2)
       |> Enum.sort_by(fn {key, _value} -> key end)
 
