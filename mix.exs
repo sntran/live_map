@@ -74,7 +74,7 @@ defmodule LiveMap.MixProject do
       {:phoenix, ">= 1.8.0 and < 2.0.0", optional: true},
       {:phoenix_live_view, ">= 1.1.0 and < 2.0.0"},
       {:jason, "~> 1.4"},
-      {:req, "~> 0.6.2", optional: true},
+      {:req, "~> 0.6.2 or ~> 0.7", optional: true},
 
       # Test/dev deps
       {:plug_cowboy, "~> 2.8", only: :test},
