@@ -63,7 +63,8 @@ defmodule LiveMap.MVT do
          {:ok, keys} <- parse_strings(fields, 3),
          {:ok, values} <- parse_values(fields, 4),
          extent <- optional_varint(fields, 5, 4096),
-         {:ok, features} <- parse_features(fields, name, keys, values, extent) do
+         {:ok, features} <-
+           parse_features(fields, name, List.to_tuple(keys), List.to_tuple(values), extent) do
       {:ok, %{name: name, extent: extent, features: features}}
     end
   end
@@ -406,12 +407,9 @@ defmodule LiveMap.MVT do
   defp validate_layer_version(2), do: :ok
   defp validate_layer_version(version), do: {:error, {:unsupported_layer_version, version}}
 
-  defp indexed_value(values, index, error_reason) when is_integer(index) and index >= 0 do
-    case Enum.at(values, index) do
-      nil -> {:error, error_reason}
-      value -> {:ok, value}
-    end
-  end
+  defp indexed_value(values, index, _error_reason)
+       when is_integer(index) and index >= 0 and index < tuple_size(values),
+       do: {:ok, elem(values, index)}
 
   defp indexed_value(_values, _index, error_reason), do: {:error, error_reason}
 

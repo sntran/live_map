@@ -371,6 +371,33 @@ defmodule LiveMap.MVTTest do
     assert rendered =~ ~s(live-map-shortbread-layer-default)
   end
 
+  test "finds a key and a value far in the tables of a large layer" do
+    # A key and a value at the end of tables of 300: the decode takes each
+    # one by its index.
+    keys = Enum.map(1..299, &"key_#{&1}") ++ ["name_en"]
+
+    values =
+      Enum.map(1..299, &value_message(:string, "value #{&1}")) ++
+        [value_message(:string, "Hà Giang")]
+
+    tags = [299, 299, 0, 0, 1, 1]
+
+    tile =
+      tile_message([
+        layer_message(
+          "place_labels",
+          [feature_message(tags, 1, point_commands([{2, 2}]), 1)],
+          keys,
+          values,
+          8,
+          2
+        )
+      ])
+
+    assert {:ok, svg} = MVT.decode(tile, zoom: 10)
+    assert svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary() =~ ">Hà Giang</text>"
+  end
+
   test "rejects malformed tags, geometry commands, and missing geometry types" do
     polygon = polygon_commands([square(0, 0, 4)])
 
