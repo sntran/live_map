@@ -37,8 +37,14 @@ defmodule LiveMap.Marker do
     id = normalize_id(Map.get(shape_slot, :id))
     label = Map.get(shape_slot, :label)
 
-    points =
-      project_points(Map.fetch!(shape_slot, :points), zoom, origin_x, origin_y, map_longitude)
+    [points | holes] =
+      project_rings(
+        [Map.fetch!(shape_slot, :points) | holes(type, shape_slot)],
+        zoom,
+        origin_x,
+        origin_y,
+        map_longitude
+      )
 
     %{
       type: type,
@@ -47,6 +53,9 @@ defmodule LiveMap.Marker do
       label: label,
       points: points,
       points_attribute: points_attribute(points),
+      holes: holes,
+      path: path([points | holes]),
+      group: normalize_id(Map.get(shape_slot, :group)),
       class: Map.get(shape_slot, :class),
       style: Map.get(shape_slot, :style),
       fill: Map.get(shape_slot, :fill),
@@ -93,7 +102,40 @@ defmodule LiveMap.Marker do
     raise ArgumentError, "marker requires title; label is a deprecated fallback"
   end
 
-  defp project_points(points, zoom, origin_x, origin_y, map_longitude) do
+  # Only a polygon has holes.
+  defp holes(:polygon, shape_slot), do: Map.get(shape_slot, :holes) || []
+  defp holes(:polyline, _shape_slot), do: []
+
+  # The rings of a shape: its points, then its holes. The holes go to the
+  # copy of the world of the points, and all the rings move with the
+  # points to the copy of the world of the map. A hole with fewer than 3
+  # points after `thin/1` has no area: it is not in the shape.
+  defp project_rings([points | holes], zoom, origin_x, origin_y, map_longitude) do
+    outer = unwrap(points)
+    center = center_longitude(outer)
+    global_offset = if center, do: round((map_longitude - center) / 360.0) * 360.0, else: 0.0
+
+    holes =
+      holes
+      |> Enum.map(fn hole ->
+        hole = unwrap(hole)
+        hole_center = center_longitude(hole)
+
+        offset =
+          if center && hole_center,
+            do: round((center - hole_center) / 360.0) * 360.0,
+            else: 0.0
+
+        to_pixels(hole, global_offset + offset, zoom, origin_x, origin_y)
+      end)
+      |> Enum.filter(&match?([_, _, _ | _], &1))
+
+    [to_pixels(outer, global_offset, zoom, origin_x, origin_y) | holes]
+  end
+
+  # The points of a ring as `{latitude, longitude}`, with no jump of more
+  # than 180° of longitude from a point to the next one.
+  defp unwrap(points) do
     points
     |> Enum.reduce({[], 0, nil}, fn point, {acc, longitude_offset, prev_lon} ->
       latitude = Coordinate.parse_number(Map.fetch!(point, :latitude), :shape)
@@ -123,24 +165,19 @@ defmodule LiveMap.Marker do
     end)
     |> elem(0)
     |> Enum.reverse()
-    |> shift_points_to_map_center(zoom, origin_x, origin_y, map_longitude)
   end
 
-  defp shift_points_to_map_center([], _zoom, _origin_x, _origin_y, _map_longitude), do: []
+  # The middle of the longitudes of a ring, or nil for no point.
+  defp center_longitude([]), do: nil
 
-  defp shift_points_to_map_center(points, zoom, origin_x, origin_y, map_longitude) do
-    {min_lon, max_lon} =
-      Enum.reduce(points, {nil, nil}, fn {_, lon}, {min, max} ->
-        {
-          if(min, do: min(min, lon), else: lon),
-          if(max, do: max(max, lon), else: lon)
-        }
-      end)
+  defp center_longitude(points) do
+    {min_lon, max_lon} = points |> Enum.map(&elem(&1, 1)) |> Enum.min_max()
+    (min_lon + max_lon) / 2.0
+  end
 
-    center_lon = (min_lon + max_lon) / 2.0
-    k = round((map_longitude - center_lon) / 360.0)
-    global_offset = k * 360.0
+  defp to_pixels([], _global_offset, _zoom, _origin_x, _origin_y), do: []
 
+  defp to_pixels(points, global_offset, zoom, origin_x, origin_y) do
     points
     |> Enum.map(fn {latitude, lon} ->
       final_lon = lon + global_offset
@@ -168,5 +205,13 @@ defmodule LiveMap.Marker do
 
   defp points_attribute(points) do
     Enum.map_join(points, " ", fn {x, y} -> "#{x},#{y}" end)
+  end
+
+  # The path of the rings of a polygon with holes: a subpath for each
+  # ring. With the rule `evenodd`, each hole is a hole.
+  defp path(rings) do
+    rings
+    |> Enum.reject(&(&1 == []))
+    |> Enum.map_join(" ", fn ring -> "M" <> points_attribute(ring) <> "Z" end)
   end
 end

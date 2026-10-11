@@ -174,6 +174,7 @@ defmodule LiveMap do
     attr(:id, :any)
     attr(:points, :list, required: true)
     attr(:label, :string)
+    attr(:group, :any, doc: "Shapes with the same group are in one <g> (see the README)")
     attr(:class, :any)
     attr(:style, :any)
     attr(:fill, :any)
@@ -184,7 +185,9 @@ defmodule LiveMap do
   slot :polygon do
     attr(:id, :any)
     attr(:points, :list, required: true)
+    attr(:holes, :list, doc: "The rings of the holes: lists of points, as `points`")
     attr(:label, :string)
+    attr(:group, :any, doc: "Shapes with the same group are in one <g> (see the README)")
     attr(:class, :any)
     attr(:style, :any)
     attr(:fill, :any)
@@ -203,6 +206,78 @@ defmodule LiveMap do
 
   @impl Phoenix.LiveComponent
   def render(assigns), do: live_map(prepare_render_assigns(assigns))
+
+  # The shapes in runs of the same group, in their order: the shapes of a
+  # run with a group are in one <g>.
+  defp shape_runs(shapes) do
+    shapes
+    |> Enum.chunk_by(& &1.group)
+    |> Enum.map(fn [first | _] = run -> {first.group, run} end)
+  end
+
+  attr(:shape, :map, required: true)
+
+  # A shape: a polygon, a polygon with holes (a path with the rule
+  # evenodd), or a polyline.
+  defp shape(%{shape: %{type: :polygon, holes: [_ | _]}} = assigns) do
+    ~H"""
+    <path
+      id={@shape.dom_id}
+      class={["live-map-polygon", @shape.class]}
+      style={@shape.style}
+      data-live-map-shape="true"
+      data-live-map-shape-type="polygon"
+      data-live-map-shape-id={@shape.id}
+      d={@shape.path}
+      fill-rule="evenodd"
+      fill={@shape.fill || "rgba(2,132,199,0.18)"}
+      stroke={@shape.stroke || "#0284c7"}
+      stroke-width={@shape.stroke_width || "2"}
+    >
+      <title :if={@shape.label}>{@shape.label}</title>
+    </path>
+    """
+  end
+
+  defp shape(%{shape: %{type: :polygon}} = assigns) do
+    ~H"""
+    <polygon
+      id={@shape.dom_id}
+      class={["live-map-polygon", @shape.class]}
+      style={@shape.style}
+      data-live-map-shape="true"
+      data-live-map-shape-type="polygon"
+      data-live-map-shape-id={@shape.id}
+      points={@shape.points_attribute}
+      fill={@shape.fill || "rgba(2,132,199,0.18)"}
+      stroke={@shape.stroke || "#0284c7"}
+      stroke-width={@shape.stroke_width || "2"}
+    >
+      <title :if={@shape.label}>{@shape.label}</title>
+    </polygon>
+    """
+  end
+
+  defp shape(assigns) do
+    ~H"""
+    <polyline
+      id={@shape.dom_id}
+      class={["live-map-polyline", @shape.class]}
+      style={@shape.style}
+      data-live-map-shape="true"
+      data-live-map-shape-type="polyline"
+      data-live-map-shape-id={@shape.id}
+      points={@shape.points_attribute}
+      fill={@shape.fill || "none"}
+      stroke={@shape.stroke || "#0284c7"}
+      stroke-width={@shape.stroke_width || "2"}
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <title :if={@shape.label}>{@shape.label}</title>
+    </polyline>
+    """
+  end
 
   defp svg_tile_content(assigns) do
     ~H"""

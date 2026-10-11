@@ -322,6 +322,70 @@ defmodule LiveMapTest do
     end
   end
 
+  describe "holes and groups" do
+    test "a polygon with holes is a path with the rule evenodd" do
+      rendered =
+        component_with_shapes([],
+          polygons: [
+            %{
+              id: "fog",
+              points: [
+                %{latitude: -10, longitude: -10},
+                %{latitude: -10, longitude: 10},
+                %{latitude: 10, longitude: 10}
+              ],
+              holes: [
+                [
+                  %{latitude: -5, longitude: -5},
+                  %{latitude: -5, longitude: 5},
+                  %{latitude: 5, longitude: 5}
+                ]
+              ]
+            }
+          ]
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+      assert Floki.find(document, "polygon") === []
+      [path] = Floki.find(document, "path#live-map-polygon-fog")
+      assert Floki.attribute(path, "fill-rule") === ["evenodd"]
+      assert Floki.attribute(path, "data-live-map-shape-type") === ["polygon"]
+      assert [d] = Floki.attribute(path, "d")
+      assert length(String.split(d, "M", trim: true)) == 2
+    end
+
+    test "the shapes of a group are in one <g>, in their order" do
+      square = fn lng ->
+        [
+          %{latitude: 0, longitude: lng},
+          %{latitude: 0, longitude: lng + 5},
+          %{latitude: 5, longitude: lng + 5}
+        ]
+      end
+
+      rendered =
+        component_with_shapes(
+          [%{id: "route", points: [%{latitude: 0, longitude: 0}, %{latitude: 0, longitude: 10}]}],
+          polygons: [
+            %{id: "a", points: square.(0), group: "fog"},
+            %{id: "b", points: square.(10), group: "fog"},
+            %{id: "c", points: square.(20)}
+          ]
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+      [group] = Floki.find(document, "g.live-map-group")
+      assert Floki.attribute(group, "data-live-map-group") === ["fog"]
+
+      assert group |> Floki.find("polygon") |> Floki.attribute("id") ===
+               ["live-map-polygon-a", "live-map-polygon-b"]
+
+      # The polygon with no group and the polyline are not in it.
+      assert [_] = Floki.find(document, "polygon#live-map-polygon-c")
+      assert Floki.find(group, "polyline") === []
+    end
+  end
+
   describe "tiles" do
     test "uses the raster rendering type by default" do
       rendered = component(zoom: 0)
@@ -1582,6 +1646,8 @@ defmodule LiveMapTest do
             :for={polygon <- @polygons}
             id={polygon.id}
             points={polygon.points}
+            holes={polygon[:holes]}
+            group={polygon[:group]}
           />
         </.live_component>
         """
