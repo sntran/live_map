@@ -149,6 +149,31 @@ elements for these overlays. It drops each point that is less than half a pixel
 from the point before it at the zoom of the map (the last point stays): a long
 line at a low zoom has many such points, and they change nothing on the screen.
 
+A `:polygon` can have holes: `holes` is a list of rings, each a list of points
+as `points`. LiveMap renders a polygon with holes as a `<path>` with
+`fill-rule="evenodd"`, one subpath for each ring. The holes move with the
+points to the copy of the world of the map. A hole with fewer than three
+points (after the half-pixel rule above) has no area, and is not in the path.
+
+    <:polygon
+      id="lake"
+      points={shore}
+      holes={[island]}
+      class="fill-sky-500/30"
+    />
+
+A `:polygon` or a `:polyline` can have a `group`. The consecutive shapes with
+the same group are in one `<g class="live-map-group" data-live-map-group="...">`.
+Give the group an opacity in CSS, and its shapes become one layer: two shapes
+that overlap do not make the overlap darker, and shapes that touch show no
+light line on their edge. LiveView also tracks the shapes of a group apart from
+the other shapes: a new shape in a group does not move the other shapes in the
+list, so they are not sent again.
+
+    <:polygon :for={tile <- @tiles} id={tile.id} points={tile.points} group="fog" />
+
+    [data-live-map-group="fog"] { opacity: 0.45; }
+
 HTML marker example:
 
     <:marker id="harbor" position="10.411379,107.136224" title="Harbor">

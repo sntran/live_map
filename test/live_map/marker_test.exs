@@ -205,4 +205,91 @@ defmodule LiveMap.MarkerTest do
 
     assert polygon.type === :polygon
   end
+
+  defp ring(points), do: Enum.map(points, fn {lat, lng} -> %{latitude: lat, longitude: lng} end)
+
+  test "projects the holes of a polygon, in the copy of the world of its points" do
+    polygon =
+      Marker.project_shape(
+        :polygon,
+        %{
+          id: "fog",
+          group: :fog,
+          points: ring([{-10, -10}, {-10, 10}, {10, 10}, {10, -10}]),
+          holes: [
+            ring([{-5, -5}, {-5, 5}, {5, 5}]),
+            # The same hole, in the copy of the world on the right.
+            ring([{-5, 355}, {-5, 365}, {5, 365}]),
+            # A hole of less than half a pixel has no area.
+            ring([{0, 0}, {0, 0.001}, {0.001, 0.001}])
+          ]
+        },
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert polygon.group === "fog"
+    assert [hole, hole] = polygon.holes
+    assert hole === [{124.44, 131.56}, {131.56, 131.56}, {131.56, 124.44}]
+
+    assert polygon.path ===
+             "M120.89,135.15 135.11,135.15 135.11,120.85 120.89,120.85Z " <>
+               "M124.44,131.56 131.56,131.56 131.56,124.44Z " <>
+               "M124.44,131.56 131.56,131.56 131.56,124.44Z"
+  end
+
+  test "a polyline has no holes, and a shape with no group has none" do
+    polyline =
+      Marker.project_shape(
+        :polyline,
+        %{points: ring([{0, 0}, {0, 10}]), holes: [ring([{0, 0}, {0, 1}, {1, 1}])]},
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert polyline.holes === []
+    assert polyline.group === nil
+  end
+
+  test "a shape with no points, and a line over the line of 180° to the west" do
+    empty =
+      Marker.project_shape(
+        :polygon,
+        %{points: [], holes: [ring([{-5, -5}, {-5, 5}, {5, 5}])]},
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert empty.points === []
+    assert empty.points_attribute === ""
+    assert [[_, _, _]] = empty.holes
+
+    # From -170° to 170°: one step of 20° to the west, not 340° to the east.
+    line =
+      Marker.project_shape(
+        :polyline,
+        %{points: ring([{0, -170}, {0, 170}])},
+        "live-map",
+        0,
+        0,
+        0,
+        0,
+        0.0
+      )
+
+    assert [{x1, _}, {x2, _}] = line.points
+    assert_in_delta x1 - x2, 20 / 360 * 256, 0.1
+  end
 end

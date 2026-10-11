@@ -183,39 +183,13 @@
     <title>Shape Layer</title>
 
     <g id={"#{@id}-shape-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
-      <%= for shape <- @shape_overlays do %>
-        <%= if shape.type == :polygon do %>
-          <polygon
-            id={shape.dom_id}
-            class={["live-map-polygon", shape.class]}
-            style={shape.style}
-            data-live-map-shape="true"
-            data-live-map-shape-type="polygon"
-            data-live-map-shape-id={shape.id}
-            points={shape.points_attribute}
-            fill={shape.fill || "rgba(2,132,199,0.18)"}
-            stroke={shape.stroke || "#0284c7"}
-            stroke-width={shape.stroke_width || "2"}
-          >
-            <title :if={shape.label}>{shape.label}</title>
-          </polygon>
+      <%= for {group, shapes} <- shape_runs(@shape_overlays) do %>
+        <%= if group do %>
+          <g class="live-map-group" data-live-map-group={group}>
+            <.shape :for={shape <- shapes} shape={shape} />
+          </g>
         <% else %>
-          <polyline
-            id={shape.dom_id}
-            class={["live-map-polyline", shape.class]}
-            style={shape.style}
-            data-live-map-shape="true"
-            data-live-map-shape-type="polyline"
-            data-live-map-shape-id={shape.id}
-            points={shape.points_attribute}
-            fill={shape.fill || "none"}
-            stroke={shape.stroke || "#0284c7"}
-            stroke-width={shape.stroke_width || "2"}
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <title :if={shape.label}>{shape.label}</title>
-          </polyline>
+          <.shape :for={shape <- shapes} shape={shape} />
         <% end %>
       <% end %>
     </g>
