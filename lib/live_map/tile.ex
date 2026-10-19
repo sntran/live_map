@@ -143,6 +143,20 @@ defmodule LiveMap.Tile do
       raise ArgumentError, "fetch_vector_tile/2 requires an MVT tile source"
     end
 
+    fetch_source_tile(source, tile)
+  end
+
+  # The bytes of a tile of a source: from its PMTiles archive, or from the
+  # URL of its template.
+  defp fetch_source_tile(%{archive: :pmtiles, url: url} = source, tile) do
+    unless String.starts_with?(url, "file://"), do: ensure_req!()
+
+    LiveMap.PMTiles.tile(url, tile.z, tile.x, tile.y,
+      headers: merge_default_headers(source.headers)
+    )
+  end
+
+  defp fetch_source_tile(source, tile) do
     ensure_req!()
     fetch_vector_body(expand_url(source, tile), source.headers)
   end
@@ -598,6 +612,7 @@ defmodule LiveMap.Tile do
     %{
       key: source_key,
       url: source_url,
+      source: source,
       headers: source.headers,
       def_id: def_id,
       display_zoom: tile.z,
@@ -629,12 +644,13 @@ defmodule LiveMap.Tile do
 
   defp fetch_vector_request(request) do
     result =
-      case fetch_vector_body(request.url, request.headers) do
+      case fetch_source_tile(request.source, request.source_tile) do
         {:ok, body} ->
           case MVT.decode(body,
                  id_prefix: request.def_id,
                  custom_css: request.custom_css,
-                 zoom: request.display_zoom
+                 zoom: request.display_zoom,
+                 schema: request.source[:schema]
                ) do
             {:ok, svg} ->
               {:ok, svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()}
@@ -804,9 +820,20 @@ defmodule LiveMap.Tile do
       |> maybe_put_source_text(:attribution, attribution)
       |> maybe_put_source_url(:attribution_url, attribution_url)
       |> maybe_put_source_text(:schema, schema)
+      |> maybe_put_archive()
 
     validate_source!(normalized_source)
   end
+
+  # A vector source whose URL is a file `.pmtiles`: all its tiles are in
+  # one archive (LiveMap.PMTiles), with no template.
+  defp maybe_put_archive(%{type: :mvt, url: url} = source) do
+    if pmtiles_url?(url), do: Map.put(source, :archive, :pmtiles), else: source
+  end
+
+  defp maybe_put_archive(source), do: source
+
+  defp pmtiles_url?(url), do: Regex.match?(~r/\.pmtiles(?:$|[?#])/i, url)
 
   defp maybe_put_source_text(source, _key, nil), do: source
 
@@ -835,6 +862,9 @@ defmodule LiveMap.Tile do
 
     value
   end
+
+  defp expand_url(%{archive: :pmtiles, url: url}, tile),
+    do: "#{url}##{tile.z}/#{tile.x}/#{tile.y}"
 
   defp expand_url(source, tile) do
     url =
@@ -868,7 +898,7 @@ defmodule LiveMap.Tile do
 
   defp infer_source_type(url) do
     cond do
-      Regex.match?(~r/(?:\.mvt|\.pbf)(?:$|[?#])/i, url) -> :mvt
+      Regex.match?(~r/(?:\.mvt|\.pbf|\.pmtiles)(?:$|[?#])/i, url) -> :mvt
       Regex.match?(~r/\.svg(?:$|[?#])/i, url) -> :svg
       true -> :raster
     end
@@ -907,6 +937,23 @@ defmodule LiveMap.Tile do
 
   defp normalize_headers(headers) do
     raise ArgumentError, "source.headers must be a list, got: #{inspect(headers)}"
+  end
+
+  defp validate_source!(%{archive: :pmtiles, url: url} = source) do
+    uri = URI.parse(url)
+
+    http? = uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != ""
+
+    file? =
+      uri.scheme == "file" and uri.host in [nil, ""] and is_binary(uri.path) and
+        String.starts_with?(uri.path, "/")
+
+    unless http? or file? do
+      raise ArgumentError,
+            "a PMTiles source.url must be an absolute http(s) or file URL, got: #{inspect(url)}"
+    end
+
+    source
   end
 
   defp validate_source!(%{url: url} = source) do
