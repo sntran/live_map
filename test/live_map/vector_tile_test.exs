@@ -345,6 +345,56 @@ defmodule LiveMap.VectorTileTest do
     assert {"user-agent", "LiveMapTest/1.0 (ops@example.com)"} in request_headers
   end
 
+  describe "a PMTiles archive with the schema of Protomaps" do
+    @fixture Path.expand("../fixtures/protomaps_ha_giang.pmtiles", __DIR__)
+
+    test "renders a standalone SVG of a tile of the archive" do
+      source = %{url: "file://" <> @fixture, schema: "protomaps", max_zoom: 14}
+
+      assert {:ok, svg} = VectorTile.render(source, 12, 3242, 1781)
+      assert svg =~ ~s(data-live-map-tile-format="mvt")
+      assert svg =~ "live-map-shortbread-role-street"
+      assert svg =~ "live-map-shortbread-role-water"
+      assert svg =~ ~r/<text[^>]*>Hà Giang</
+
+      # Above the highest zoom level of the archive: a part of a tile.
+      assert {:ok, svg} = VectorTile.render(source, 16, 51_876, 28_496)
+      assert svg =~ ~s(viewBox="0 0 0.25 0.25")
+    end
+
+    test "renders an empty tile out of the area of the archive" do
+      source = %{url: "file://" <> @fixture, schema: "protomaps"}
+
+      assert {:ok, svg} = VectorTile.render(source, 12, 0, 0)
+      refute svg =~ "<text"
+    end
+
+    test "renders an error for an archive that is not there" do
+      source = %{url: "file:///none/live_map.pmtiles", schema: "protomaps"}
+      assert {:error, :enoent} = VectorTile.render(source, 12, 3242, 1781)
+    end
+
+    test "renders the tiles of the archive in the component" do
+      rendered =
+        render_component(LiveMap,
+          id: "live-map",
+          width: 256,
+          height: 256,
+          latitude: 22.82,
+          longitude: 104.985,
+          zoom: 12,
+          sync: true,
+          tile_source: %{url: "file://" <> @fixture, schema: "protomaps", max_zoom: 14}
+        )
+
+      {:ok, document} = Floki.parse_document(rendered)
+
+      assert [_] = Floki.find(document, "defs svg[data-live-map-source-tile='12/3242/1781']")
+      assert rendered =~ "Hà Giang"
+      refute Floki.find(document, "image") |> Enum.any?()
+    end
+  end
+
   defp shortbread_tile do
     keys = ["kind"]
     values = [value_message(:string, "river")]

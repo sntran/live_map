@@ -156,6 +156,42 @@ defmodule LiveMap.TileTest do
            )
   end
 
+  test "prepare_layer takes a PMTiles archive as a vector source" do
+    layer =
+      Tile.prepare_layer([Tile.at(0, 0, 13)], %{
+        url: "https://build.example.com/20261019.pmtiles",
+        schema: "protomaps",
+        max_zoom: 12
+      })
+
+    assert %{type: :mvt, archive: :pmtiles, schema: "protomaps", max_zoom: 12} = layer.source
+    assert [%{state: "loading", source_tile: "12/2048/2048"}] = layer.tiles
+
+    assert %{type: :mvt, archive: :pmtiles} =
+             Tile.normalize_source(%{url: "file:///maps/planet.pmtiles"})
+
+    assert %{type: :mvt, archive: :pmtiles} =
+             Tile.normalize_source(%{url: "https://r2.example.com/planet.PMTiles?key=1"})
+
+    # A template of tiles is not an archive.
+    refute Map.has_key?(
+             Tile.normalize_source(%{url: "https://t.example/{z}/{x}/{y}.mvt"}),
+             :archive
+           )
+
+    for url <- [
+          "maps/planet.pmtiles",
+          "/maps/planet.pmtiles",
+          "ftp://maps.example.com/planet.pmtiles",
+          "file://maps/planet.pmtiles",
+          "https:///planet.pmtiles"
+        ] do
+      assert_raise ArgumentError,
+                   ~r/a PMTiles source.url must be an absolute http\(s\) or file URL/,
+                   fn -> Tile.normalize_source(%{url: url}) end
+    end
+  end
+
   test "prepare_layer only requires versions for versioned templates" do
     layer =
       Tile.prepare_layer([%{x: 0, y: 0, z: 0}], %{

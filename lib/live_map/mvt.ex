@@ -519,9 +519,11 @@ defmodule LiveMap.MVT do
     features = Enum.flat_map(layers, & &1.features)
 
     features =
-      if Keyword.get(opts, :schema) == "openmaptiles",
-        do: Enum.flat_map(features, &LiveMap.MVT.OpenMapTiles.normalize/1),
-        else: features
+      case Keyword.get(opts, :schema) do
+        "openmaptiles" -> Enum.flat_map(features, &LiveMap.MVT.OpenMapTiles.normalize/1)
+        "protomaps" -> Enum.flat_map(features, &LiveMap.MVT.Protomaps.normalize/1)
+        _shortbread -> features
+      end
 
     groups =
       features

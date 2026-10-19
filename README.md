@@ -239,9 +239,9 @@ vector rendering.
 servers. If both attributes are supplied, `rendering-type` selects the built-in
 source.
 
-Tile source type is inferred from the URL by default: `.mvt` and `.pbf` URLs are
-treated as MVT sources, `.svg` URLs are treated as standalone SVG sources, and
-everything else is treated as raster.
+Tile source type is inferred from the URL by default: `.mvt`, `.pbf` and
+`.pmtiles` URLs are treated as MVT sources, `.svg` URLs are treated as
+standalone SVG sources, and everything else is treated as raster.
 
 Raster and Shortbread MVT sources support overzoom above their `max_zoom` by
 cropping the appropriate parent tile. Shortbread MVT sources are
@@ -379,6 +379,71 @@ The URL of the tiles of OpenFreeMap has the date of its data, and
 changes each week: get it from the TileJSON of OpenFreeMap
 (`https://tiles.openfreemap.org/planet`), and get it again each day.
 
+#### Tiles in a PMTiles archive, and the schema of Protomaps
+
+A PMTiles archive (version 3) has all the tiles of a map in one file. A
+source with a URL that ends in `.pmtiles` reads its tiles from the
+archive with `LiveMap.PMTiles`: the URL has no `{z}`, `{x}` and `{y}`.
+The URL is an `http` or `https` URL of a server that gives ranges (for
+example R2, S3, or the builds of Protomaps), or a `file://` URL of a
+local file.
+
+A source with `schema: "protomaps"` takes the tiles of the Protomaps
+basemap (version 4): `LiveMap.MVT.Protomaps` gives each feature the
+layer and the properties of Shortbread before the render.
+
+```elixir
+forward "/vector", LiveMap.VectorTile.Plug,
+  source: %{
+    url: "https://build.protomaps.com/20261019.pmtiles",
+    max_zoom: 15,
+    schema: "protomaps"
+  },
+  base_style: "detailed"
+```
+
+The reader reads only the parts of the archive that a tile needs, each
+with a request of a range:
+
+1. For the first tile, the header and the root directory (the first
+   16 KiB of the file).
+2. For a tile in a new part of the map, a leaf directory (about 115 KB
+   for the planet).
+3. For each tile, the data of the tile.
+
+The reader keeps the header, the root directory and the last 4 leaf
+directories in an ETS table of the application `:live_map`. A leaf
+directory of the planet uses about 1.7 MB of memory. To change the
+number of leaf directories:
+
+```elixir
+config :live_map, :pmtiles_leaf_cache, 8
+```
+
+Each request after the first one has the `ETag` of the file in
+`If-Match`. When the file at the URL changes, the server answers `412`:
+the reader forgets the old file and reads the tile from the new file.
+A server that does not give ranges causes the error `:no_ranges`. The
+reader knows the tiles of type MVT, with no compression or with gzip.
+
+The conversion keeps the water, the land cover, the land use, the roads,
+the railways, the ferries, the aerial ways, the piers, the buildings,
+the borders of the countries and of the provinces (`kind_detail` 2 and
+4), and the names of the places and of the water. The name of a place
+in a script that is not Latin is its English name (`name:en`) when the
+tile has one. The first zoom of the label of a country or of a province
+gives its priority. The conversion drops the land under the map
+(`earth`), the points of interest and the house numbers.
+
+Protomaps makes a new build of the planet each day, at
+`https://build.protomaps.com/YYYYMMDD.pmtiles` (about 139 GB). The list
+of the builds is at `https://build-metadata.protomaps.dev/builds.json`.
+Get the newest key with a version `4.x` from the list, and get the list
+again each day: an old build can go. Before you read the tiles directly
+from `build.protomaps.com` in production, read the terms of Protomaps.
+A copy of a build in your bucket, or an extract of an area
+(`pmtiles extract`), works with the same source.
+
 #### Large tiles at low zooms
 
 LiveMap reads all the data of a tile before the render, also the labels
@@ -391,6 +456,7 @@ on 9 October 2026:
 | OpenFreeMap (OpenMapTiles) | 1.3 MB | 1.6 MB | 474 KB | 229 KB |
 | `vector.openstreetmap.org` (Shortbread) | 138 KB | 431 KB | 267 KB | 302 KB |
 | VersaTiles (Shortbread) | 64 KB | 99 KB | 63 KB | 73 KB |
+| Protomaps (basemap v4, build 20261019) | 85 KB | 179 KB | 79 KB | 90 KB |
 
 A tile of OpenFreeMap at zoom 2 took LiveMap 1 to 4 seconds on a laptop,
 nearly all of it to read the data. In a VM in WebAssembly (a Durable
@@ -592,6 +658,7 @@ To emit self-contained vector SVG, point the CLI at an MVT source:
 - Vector tile rendering moves tile fetching and decoding onto your server. Treat `tile_source` as trusted application configuration, not as untrusted request input.
 - Injected SVG becomes active page DOM. LiveMap intentionally does not sanitize it and preserves embedded elements, styles, scripts, and references while rewriting local IDs. Only inject SVG endpoints you trust as application code; an untrusted source can create an XSS vulnerability.
 - `LiveMap.VectorTile.Plug` never accepts an upstream source from request parameters. Keep its configured source URL and headers trusted, version styles in the endpoint URL, and place a CDN or reverse proxy in front when appropriate.
+- A PMTiles source keeps the directories of its archive in memory, and reads the data of each tile with a request of a range: see "Tiles in a PMTiles archive, and the schema of Protomaps".
 - LiveMap fetches vector tiles through Req and does not write them to disk. The component keeps its recent tiles in memory. For `LiveMap.VectorTile.Plug`, the `Cache-Control` and `ETag` headers let the browser and a CDN keep the tiles: put a cache in front of it to follow the tile policy of the source.
 - Remote tile sources can increase server load and can expose SSRF risks if you allow untrusted users to control URLs or headers.
 - LiveMap reads and renders a tile in the process of the request. A large tile at a low zoom can take seconds, and much longer in a VM in WebAssembly: see "Large tiles at low zooms".
