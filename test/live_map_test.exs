@@ -747,6 +747,28 @@ defmodule LiveMapTest do
     end
   end
 
+  describe "SVG tiles" do
+    test "only the first render of a page has the tiles as images" do
+      conn = Phoenix.ConnTest.build_conn()
+
+      # The first render, for a browser with no JavaScript yet.
+      html = conn |> get("/svg") |> html_response(200)
+      {:ok, document} = Floki.parse_document(html)
+      assert [content] = Floki.find(document, "g[data-svg-href='/vector/0/0/0.svg']")
+      assert [_image] = Floki.find(content, "image[href='/vector/0/0/0.svg']")
+
+      # The render over the socket keeps the image of a tile of the first
+      # render (phx-update="ignore"). A new tile of a later render has no
+      # image: the hook downloads it one time.
+      {:ok, view, _html} = live(conn, "/svg")
+      html = render_hook(view, "zoom", %{"zoom" => 1})
+
+      {:ok, document} = Floki.parse_document(html)
+      assert [content] = Floki.find(document, "g[data-svg-href='/vector/1/0/0.svg']")
+      assert Floki.find(content, "image") == []
+    end
+  end
+
   describe "map controls" do
     setup do
       [conn: Phoenix.ConnTest.build_conn()]

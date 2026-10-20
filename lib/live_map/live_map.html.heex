@@ -118,7 +118,7 @@
         overflow="hidden"
         data-live-map-display-tile={tile.display_tile}
       >
-        <.svg_tile_content map_id={@id} tile={tile} />
+        <.svg_tile_content map_id={@id} tile={tile} fallback={not @connected?} />
       </svg>
 
       <svg
@@ -488,7 +488,21 @@
         }
       }
 
-      const fetchSVG = async (href, signal) => {
+      // The end of the download of the image of a tile: the same image in
+      // a new element shares the download, and is complete at once when
+      // the browser has it.
+      const imageDone = (href, signal) => new Promise(resolve => {
+        const probe = new Image()
+        probe.addEventListener("load", resolve, {once: true})
+        probe.addEventListener("error", resolve, {once: true})
+        signal.addEventListener("abort", resolve, {once: true})
+        probe.src = href
+        if (probe.complete) resolve()
+      })
+
+      // With an image of the tile in the page, the hook waits for the image,
+      // and takes its response from the HTTP cache: one download.
+      const fetchSVG = async (href, signal, image) => {
         const request = new Request(new URL(href, document.baseURI), {credentials: "same-origin"})
         const cache = await openCache()
         signal.throwIfAborted()
@@ -508,8 +522,13 @@
           return parseSVG(text, signal)
         }
 
+        if (image) {
+          await imageDone(request.url, signal)
+          signal.throwIfAborted()
+        }
+
         const response = await fetch(request, {
-          cache: cachedResponse ? "no-cache" : "default",
+          cache: image ? "force-cache" : cachedResponse ? "no-cache" : "default",
           signal
         })
 
@@ -605,6 +624,8 @@
         return root
       }
 
+      // A tile that the hook cannot put into the page (a cross-origin SVG
+      // with no CORS, a request that failed) shows as an image.
       const ensureFallback = (element, href) => {
         const child = element.firstElementChild
 
@@ -625,18 +646,21 @@
 
         hook.liveMapSVGController?.abort()
         hook.liveMapSVGHref = href
-        ensureFallback(hook.el, href)
 
+        const child = hook.el.firstElementChild
+        const image = child?.localName === "image" && child.getAttribute("href") === href
         const controller = new AbortController()
         hook.liveMapSVGController = controller
 
-        fetchSVG(href, controller.signal)
+        fetchSVG(href, controller.signal, image)
           .then(svg => {
             controller.signal.throwIfAborted()
             hook.el.replaceChildren(scopeSVG(svg, hook.el.id))
           })
           .catch(error => {
-            if (error?.name !== "AbortError") hook.liveMapSVGHref = null
+            if (error?.name === "AbortError") return
+            hook.liveMapSVGHref = null
+            ensureFallback(hook.el, href)
           })
       }
 

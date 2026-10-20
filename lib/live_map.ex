@@ -32,6 +32,8 @@ defmodule LiveMap do
      |> assign_new(:height, fn -> 150 end)
      |> assign_new(:title, fn -> "" end)
      |> assign_new(:script_csp_nonce, fn -> nil end)
+     # The first render of a page is for a browser with no JavaScript yet.
+     |> assign(:connected?, connected?(socket))
      |> assign_new(:style, fn -> [] end)
      |> assign_new(:"base-style", fn -> "colorful" end)
      |> assign_new(:"background-tile-source", fn -> nil end)
@@ -279,6 +281,11 @@ defmodule LiveMap do
     """
   end
 
+  # An SVG tile: the hook puts its SVG into the page. A tile of the first
+  # render of the page (for a browser with no JavaScript yet) also has
+  # the tile as an image; the hook waits for that image, and takes the
+  # same response from the HTTP cache. A tile of a later render has no
+  # image, so the browser downloads it one time.
   defp svg_tile_content(assigns) do
     ~H"""
     <g
@@ -287,7 +294,7 @@ defmodule LiveMap do
       phx-update="ignore"
       data-svg-href={@tile.href}
     >
-      <image href={@tile.href} x="0" y="0" width="256" height="256" />
+      <image :if={@fallback} href={@tile.href} x="0" y="0" width="256" height="256" />
     </g>
     """
   end
