@@ -287,11 +287,24 @@ LiveMap's built-in sources instead of `tile_source`. Root-relative URLs are
 accepted for raster and SVG browser-loaded tiles. Server-fetched MVT sources
 must remain absolute HTTP(S) URLs.
 
-The external SVG is always rendered through `<image>` first. LiveMap's built-in
-runtime colocated hook fetches the same URL, uses the browser Cache API according
-to its HTTP freshness headers, scopes SVG IDs, and injects it into the page. No
-asset import or custom hook setup is required. Disabled JavaScript, blocked
-scripts, failed requests, and invalid SVG retain the image fallback.
+LiveMap's built-in runtime colocated hook puts the SVG of each tile into the
+page. It uses the Cache API of the browser according to the HTTP freshness
+headers, and scopes the SVG IDs. No asset import or custom hook setup is
+necessary.
+
+The browser downloads each tile one time:
+
+- The first render of the page (for a browser with no JavaScript yet) shows
+  each tile as an `<image>`. The hook waits for this image, then takes the
+  same response from the HTTP cache.
+- The tiles of a later render (over the socket) have no `<image>`. The hook
+  downloads them.
+
+Give the SVG tiles an HTTP cache lifetime (`Cache-Control` with `max-age`):
+with `no-store`, the hook downloads a tile of the first render a second
+time. With no JavaScript, each tile stays an image. When the hook cannot put
+a tile into the page (a request that failed, an SVG that is not valid), the
+tile shows as an image.
 
 > **Security:** Injected SVG is trusted application code. LiveMap deliberately
 > does not sanitize it; elements, attributes, scripts, styles, and external
@@ -311,7 +324,7 @@ nonce used by the application:
 ```
 
 Cross-origin SVGs need CORS permission for injection even when the browser can
-display them as an image. A CORS failure simply preserves that image. Browser
+display them as an image. When CORS stops the hook, the tile shows as an image. Browser
 image requests cannot apply `tile_source.headers`; use a same-origin proxy such
 as `LiveMap.VectorTile.Plug` when upstream credentials or headers are required.
 
@@ -338,6 +351,11 @@ representation-specific ETag; set `compress: false` when a reverse proxy should
 own compression instead. Above the source's `max_zoom`, the Plug fetches and
 crops the appropriate parent while styling labels for the requested display
 zoom. The optional Req dependency is required.
+
+The path data of an SVG tile has relative commands, with 3 decimals of the
+tile (0.26 px of a tile of 256 px), and with 4 decimals above the `max_zoom`
+of the source. With brotli, the tiles of a view were 2 to 3 times smaller
+than with absolute commands and 4 decimals.
 
 The Plug does not retain rendered tiles in process. Applications can place it
 behind their preferred reverse-proxy, CDN, or Plug cache. A wrapper Plug can
