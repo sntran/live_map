@@ -58,6 +58,7 @@ defmodule LiveMap.VectorTile do
              id_prefix: id_prefix,
              custom_css: custom_css,
              zoom: zoom,
+             source_zoom: source_zoom,
              schema: source[:schema]
            ) do
       svg = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
