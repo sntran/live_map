@@ -1423,9 +1423,12 @@ defmodule LiveMapTest do
 
   defp layer_offset(document, layer), do: parse_offset(layer_style(document, layer))
 
+  # A number of the move can have an exponent: -17600.0 is "-1.76e4".
   defp parse_offset(style) do
     [x, y] =
-      Regex.run(~r/translate\((-?[\d.]+)px, (-?[\d.]+)px\)/, style, capture: :all_but_first)
+      Regex.run(~r/translate\((-?[\d.]+(?:e-?\d+)?)px, (-?[\d.]+(?:e-?\d+)?)px\)/, style,
+        capture: :all_but_first
+      )
 
     {String.to_float(x), String.to_float(y)}
   end
