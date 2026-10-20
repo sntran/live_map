@@ -650,6 +650,7 @@ defmodule LiveMap.Tile do
                  id_prefix: request.def_id,
                  custom_css: request.custom_css,
                  zoom: request.display_zoom,
+                 source_zoom: request.source_tile.z,
                  schema: request.source[:schema]
                ) do
             {:ok, svg} ->

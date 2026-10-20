@@ -7,6 +7,13 @@ defmodule LiveMap.MVT do
 
   @doc """
   Decodes a Mapbox Vector Tile into a tile-local SVG document.
+
+  Options: `:id_prefix`, `:custom_css`, `:schema`, `:zoom` (the zoom of the
+  display), and `:source_zoom` (the zoom of the data, the zoom of the
+  display by default). The path data has relative commands with 3
+  decimals of the tile (0.26 px of a tile of 256 px), and with 4 decimals
+  when the display zoom is more than the zoom of the data: the tile is
+  then larger on the screen.
   """
   @spec decode(binary(), keyword()) :: {:ok, Phoenix.HTML.safe()} | {:error, decode_error()}
   def decode(binary, opts \\ []) when is_binary(binary) do
@@ -512,6 +519,7 @@ defmodule LiveMap.MVT do
     id_prefix = Keyword.get(opts, :id_prefix, hash)
     custom_css = Keyword.get(opts, :custom_css, "")
     zoom = Keyword.get(opts, :zoom, 0)
+    decimals = if Keyword.get(opts, :source_zoom, zoom) < zoom, do: 4, else: 3
     label_density = label_density(zoom)
     clip_id = "live-map-mvt-clip-#{id_prefix}"
     css = Enum.join([tile_css(), default_label_css(zoom), custom_css], "\n")
@@ -527,7 +535,7 @@ defmodule LiveMap.MVT do
 
     groups =
       features
-      |> Enum.reduce(%{}, &group_feature/2)
+      |> Enum.reduce(%{}, &group_feature(&1, &2, decimals))
       |> Enum.sort_by(fn {key, _value} -> key end)
 
     rendered_paths =
@@ -558,19 +566,22 @@ defmodule LiveMap.MVT do
      ]}
   end
 
-  defp group_feature(feature, groups) do
+  defp group_feature(feature, groups, decimals) do
     role = feature_role(feature.layer, feature.properties)
     kind = feature_kind(feature.properties)
     bridge? = truthy?(Map.get(feature.properties, "bridge"))
     tunnel? = truthy?(Map.get(feature.properties, "tunnel"))
     admin_level = Map.get(feature.properties, "admin_level")
     group_key = {role, feature.type, kind, bridge?, tunnel?, feature.layer, admin_level}
-    contribution = geometry_contribution(feature)
+    contribution = geometry_contribution(feature, decimals)
 
     Map.update(groups, group_key, contribution, &merge_group_geometry(&1, contribution))
   end
 
-  defp geometry_contribution(%{type: :point, geometry: points, extent: extent} = feature) do
+  defp geometry_contribution(
+         %{type: :point, geometry: points, extent: extent} = feature,
+         _decimals
+       ) do
     name =
       Map.get(feature.properties, "name:en") || Map.get(feature.properties, "name_en") ||
         Map.get(feature.properties, "name")
@@ -586,12 +597,12 @@ defmodule LiveMap.MVT do
     end
   end
 
-  defp geometry_contribution(%{type: :line, geometry: parts, extent: extent}) do
-    %{paths: Enum.map(parts, &path_segment(&1, extent, false))}
+  defp geometry_contribution(%{type: :line, geometry: parts, extent: extent}, decimals) do
+    %{paths: Enum.map(parts, &path_segment(&1, extent, false, decimals))}
   end
 
-  defp geometry_contribution(%{type: :polygon, geometry: rings, extent: extent}) do
-    %{paths: Enum.map(rings, &path_segment(&1, extent, true))}
+  defp geometry_contribution(%{type: :polygon, geometry: rings, extent: extent}, decimals) do
+    %{paths: Enum.map(rings, &path_segment(&1, extent, true, decimals))}
   end
 
   defp merge_group_geometry(left, right) do
@@ -602,15 +613,64 @@ defmodule LiveMap.MVT do
     {normalize_coordinate(x, extent), normalize_coordinate(y, extent)}
   end
 
-  defp path_segment(points, extent, close?) do
-    [first | rest] = Enum.map(points, &normalize_point(&1, extent))
+  # The path data of a line or a ring: its first point, then each point
+  # from the point before it (relative commands), in steps of
+  # 10^-decimals of the tile. A point that rounds to the point before it
+  # goes. Each line and ring starts with an absolute "M", so the point
+  # after a "z" does not matter.
+  defp path_segment(points, extent, close?, decimals) do
+    steps = Integer.pow(10, decimals)
 
-    [
-      "M",
-      coordinate_pair(first),
-      Enum.map(rest, fn point -> ["L", coordinate_pair(point)] end),
-      if(close?, do: "Z", else: [])
-    ]
+    [{x, y} | rest] =
+      Enum.map(points, fn {x, y} -> {round(x * steps / extent), round(y * steps / extent)} end)
+
+    {moves, _last} =
+      Enum.map_reduce(rest, {x, y}, fn
+        point, point -> {[], point}
+        {px, py}, {lx, ly} -> {["l", step_pair(px - lx, py - ly, decimals)], {px, py}}
+      end)
+
+    ["M", step_pair(x, y, decimals), moves, if(close?, do: "z", else: [])]
+  end
+
+  # Two numbers of a path, with no space where the second one cannot join
+  # the first one: before a "-", and before a "." after a number with a
+  # ".".
+  defp step_pair(x, y, decimals) do
+    first = steps_to_string(x, decimals)
+    second = steps_to_string(y, decimals)
+    [first, pair_separator(first, second), second]
+  end
+
+  defp pair_separator(_first, "-" <> _second), do: ""
+  defp pair_separator(first, "." <> _second), do: if(first =~ ".", do: "", else: " ")
+  defp pair_separator(_first, _second), do: " "
+
+  @doc false
+  # A number of steps of 10^-decimals as the shortest decimal text: 0.25
+  # is ".25", -0.5 is "-.5".
+  def steps_to_string(steps, _decimals) when steps == 0, do: "0"
+
+  def steps_to_string(steps, decimals) when steps < 0,
+    do: "-" <> steps_to_string(-steps, decimals)
+
+  def steps_to_string(steps, decimals) do
+    scale = Integer.pow(10, decimals)
+    whole = div(steps, scale)
+
+    case rem(steps, scale) do
+      0 ->
+        Integer.to_string(whole)
+
+      part ->
+        digits =
+          part
+          |> Integer.to_string()
+          |> String.pad_leading(decimals, "0")
+          |> String.trim_trailing("0")
+
+        if whole == 0, do: "." <> digits, else: "#{whole}.#{digits}"
+    end
   end
 
   defp render_group(
@@ -1082,10 +1142,6 @@ defmodule LiveMap.MVT do
 
   defp normalize_coordinate(value, extent) do
     value / extent
-  end
-
-  defp coordinate_pair({x, y}) do
-    [format_number(x), " ", format_number(y)]
   end
 
   defp format_number(number) when is_integer(number), do: Integer.to_string(number)

@@ -1,5 +1,6 @@
 defmodule LiveMap.MVTTest do
   use ExUnit.Case, async: true
+  use ExUnitProperties
 
   alias LiveMap.MVT
 
@@ -15,8 +16,8 @@ defmodule LiveMap.MVTTest do
     assert rendered =~ ~s(class="live-map-shortbread-feature live-map-shortbread-role-street)
     assert rendered =~ ~s(class="live-map-shortbread-feature live-map-shortbread-role-site)
     assert rendered =~ ~s(fill-rule="evenodd")
-    assert rendered =~ ~s(d="M0 0L1 0L1 1L0 1ZM0.25 0.25L0.75 0.25L0.75 0.75L0.25 0.75Z")
-    assert rendered =~ ~s(d="M0 0.5L1 0.5")
+    assert rendered =~ ~s(d="M0 0l1 0l0 1l-1 0zM.25.25l.5 0l0 .5l-.5 0z")
+    assert rendered =~ ~s(d="M0 .5l1 0")
     assert rendered =~ ~s(<text)
     assert rendered =~ ~s[&lt;script&gt;alert(1)&lt;/script&gt;</text>]
     refute rendered =~ "<script>"
@@ -322,7 +323,84 @@ defmodule LiveMap.MVTTest do
     assert {:ok, svg} = MVT.decode(tile)
 
     rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
-    assert rendered =~ ~s(d="M0 0L1 1")
+    assert rendered =~ ~s(d="M0 0l1 1")
+  end
+
+  describe "the path data" do
+    # A tile of one street, a line of `points` in an extent of 4096.
+    defp street_tile(points) do
+      tile_message([
+        layer_message(
+          "streets",
+          [feature_message([0, 0], 2, line_commands([points]), 1)],
+          ["kind"],
+          [value_message(:string, "service")],
+          4096,
+          2
+        )
+      ])
+    end
+
+    defp path_data(tile, opts \\ []) do
+      {:ok, svg} = MVT.decode(tile, opts)
+      rendered = svg |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_to_binary()
+      [_all, d] = Regex.run(~r/ d="([^"]*)"/, rendered)
+      d
+    end
+
+    # The points of path data, in steps of 10^-decimals: the first one
+    # absolute, the others from the point before.
+    defp path_points(d, decimals) do
+      scale = Integer.pow(10, decimals)
+
+      ~r/[Mlz]|-?(?:\d+(?:\.\d*)?|\.\d+)/
+      |> Regex.scan(d)
+      |> List.flatten()
+      |> Enum.reject(&(&1 in ["M", "l", "z"]))
+      |> Enum.map(fn number ->
+        {value, ""} = Float.parse(String.replace(number, ~r/^(-?)\./, "\\g{1}0."))
+        round(value * scale)
+      end)
+      |> Enum.chunk_every(2)
+      |> Enum.scan(fn [dx, dy], [x, y] -> [x + dx, y + dy] end)
+    end
+
+    test "relative commands with 3 decimals of the tile" do
+      assert path_data(street_tile([{0, 0}, {1365, 2731}, {4096, 4096}])) ==
+               "M0 0l.333.667l.667.333"
+    end
+
+    test "4 decimals when the display zoom is more than the zoom of the data" do
+      tile = street_tile([{0, 0}, {1365, 2731}])
+
+      assert path_data(tile, zoom: 15, source_zoom: 14) == "M0 0l.3333.6667"
+      assert path_data(tile, zoom: 14, source_zoom: 14) == "M0 0l.333.667"
+    end
+
+    test "a point that rounds to the point before it goes" do
+      assert path_data(street_tile([{0, 0}, {1, 1}, {4096, 4096}])) == "M0 0l1 1"
+    end
+
+    property "the path data gives the points again, to the nearest step" do
+      check all(
+              points <-
+                list_of(tuple({integer(-128..4224), integer(-128..4224)}),
+                  min_length: 2,
+                  max_length: 30
+                ),
+              decimals <- member_of([3, 4])
+            ) do
+        opts = if decimals == 4, do: [zoom: 15, source_zoom: 14], else: []
+        scale = Integer.pow(10, decimals)
+
+        expected =
+          points
+          |> Enum.map(fn {x, y} -> [round(x * scale / 4096), round(y * scale / 4096)] end)
+          |> Enum.dedup()
+
+        assert points |> street_tile() |> path_data(opts) |> path_points(decimals) == expected
+      end
+    end
   end
 
   test "renders merged river lines, site polygons, and default layer tokens" do
