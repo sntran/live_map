@@ -35,6 +35,7 @@
     <g id={"#{@id}-background-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
       <image
         :for={tile <- @background_tiles}
+        :key={{tile.x, tile.y}}
         :if={is_nil(tile[:view_box])}
         id={"#{@id}-background-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
         href={tile.href}
@@ -46,6 +47,7 @@
 
       <svg
         :for={tile <- @background_tiles}
+        :key={{tile.x, tile.y}}
         :if={not is_nil(tile[:view_box])}
         id={"#{@id}-background-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
         x={tile.x - @origin_x}
@@ -81,6 +83,7 @@
     <g id={"#{@id}-tile-layer-#{@layer_key}"} class="live-map-layer" style={@layer_style}>
       <image
         :for={tile <- @tile_layer.tiles}
+        :key={{tile.x, tile.y}}
         :if={tile.type == :image and is_nil(tile[:view_box])}
         id={"#{@id}-image-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
         href={tile.href}
@@ -92,6 +95,7 @@
 
       <svg
         :for={tile <- @tile_layer.tiles}
+        :key={{tile.x, tile.y}}
         :if={tile.type == :image and not is_nil(tile[:view_box])}
         id={"#{@id}-image-tile-#{@zoom}-#{div(tile.x, 256)}-#{div(tile.y, 256)}"}
         x={tile.x - @origin_x}
@@ -107,6 +111,7 @@
 
       <svg
         :for={tile <- @tile_layer.tiles}
+        :key={tile.display_tile}
         :if={tile.type == :svg_image}
         id={"#{@id}-svg-tile-#{String.replace(tile.display_tile, "/", "-")}"}
         x={tile.x - @origin_x}
@@ -123,6 +128,7 @@
 
       <svg
         :for={tile <- @tile_layer.tiles}
+        :key={tile.display_tile}
         :if={tile.type == :svg_use}
         id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
         x={tile.x - @origin_x}
@@ -149,6 +155,7 @@
 
       <svg
         :for={tile <- @tile_layer.tiles}
+        :key={tile.display_tile}
         :if={tile.type == :error}
         id={"#{@id}-tile-#{String.replace(tile.display_tile, "/", "-")}"}
         x={tile.x - @origin_x}

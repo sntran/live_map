@@ -197,9 +197,10 @@ groups, while the center stays in the same cell. The markers and the points
 of the shapes do not change, and LiveView sends only the new transform. A
 map that follows a moving point, or a map that a hook pans, sends a small
 update for each move, not all of the points of its lines again. When new
-tiles come into the view, LiveView sends the list of the tiles again. Each
-tile has an id from its zoom and its place, so the browser keeps the
-tiles that stay in the view, with their images.
+tiles come into the view, LiveView sends only the new tiles: each tile has
+a key from its place in the lists of the tiles (`:key`), and an id from
+its zoom and its place, so the browser keeps the tiles that stay in the
+view, with their images.
 
 The id of each group has the zoom and the cell of the origin
 (`MAP_ID-tile-layer-ZOOM-X-Y`). A new zoom or a new cell gives new groups.
